@@ -1,0 +1,162 @@
+/* Inter Font Import */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Airbnb Design Palette with Red Wash Hierarchy */
+  --bg-main: #FFF9FA; /* Subtle red-tinted canvas instead of pure white */
+  --bg-card: #FFFFFF; 
+  
+  --text-main: #222222; /* Ink */
+  --text-sub: #6A6A6A; /* Muted */
+  --text-body: #3F3F3F; /* Body */
+  
+  --line: #DDDDDD; /* Hairline */
+  --line-soft: #EBEBEB; /* Hairline Soft */
+  
+  --point: #FF385C; /* Rausch */
+  --point-dark: #E00B41; /* Rausch Active */
+  --point-light: #FFD1DA; /* Rausch Disabled / Light tint */
+  --point-visible: #FF385C; /* Matches primary */
+  
+  --point-5: rgba(255, 56, 92, 0.05);
+  --point-10: rgba(255, 56, 92, 0.1);
+  --point-20: rgba(255, 56, 92, 0.2);
+  
+  --surface-soft: var(--point-5);
+  --surface-strong: var(--point-10);
+
+  --success: #10B981;
+  --error: #C13515; /* Primary Error Text */
+
+  /* Typography */
+  --font-main: 'Inter', Circular, -apple-system, system-ui, Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --ls-tight: 0; /* Removing negative tracking for Inter body */
+
+  /* Spacing System */
+  --section-gap: 64px; /* {spacing.section} */
+  --card-padding: 24px; /* {spacing.lg} */
+  --btn-padding: 14px;
+  --list-gap: 16px; /* {spacing.base} */
+
+  /* Shapes */
+  --radius-full: 9999px;
+  --radius-md: 14px;
+  --radius: 14px; /* Fallback for existing --radius */
+  --radius-sm: 8px;
+
+  /* Shadows - Single Tier Elevation */
+  --shadow-subtle: none; /* Base is flat */
+  --shadow-elevation: rgba(0, 0, 0, 0.02) 0 0 0 1px, rgba(0, 0, 0, 0.04) 0 2px 6px 0, rgba(0, 0, 0, 0.1) 0 4px 8px 0;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  letter-spacing: var(--ls-tight);
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 
+  사용자님 요청: 눈에 확실히 보이는 은은한 그라데이션 
+  (로그인 페이지 전용 - Airbnb 스타일을 해치지 않는 선에서 포인트 컬러 배합)
+*/
+.login-bg {
+  min-height: 100vh !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: linear-gradient(135deg, #FFD1DA 0%, #FFFFFF 50%, #FFFFFF 100%) !important;
+  padding: 24px !important;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--card-padding);
+  box-shadow: none; /* Flat by default */
+  transition: box-shadow 0.2s ease;
+}
+
+/* 호버 시에만 엘리베이션 적용 */
+.card-hover:hover {
+  box-shadow: var(--shadow-elevation);
+  border-color: transparent;
+}
+
+/* Sidebar Styling - Editorial Dropdown style */
+.sidebar {
+  width: 240px;
+  background: var(--bg-main);
+  border-right: 1px solid var(--line);
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 0;
+  z-index: 100;
+}
+
+.nav-item {
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-sub);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.2s ease;
+  position: relative;
+  border-radius: var(--radius-sm);
+  margin: 0 16px 4px 16px;
+}
+
+.nav-item:hover {
+  background-color: var(--point-10);
+  color: var(--point);
+}
+
+.nav-item.active {
+  background-color: var(--point);
+  color: #FFFFFF;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(255, 56, 92, 0.25);
+}
+
+/* Remove the left line for active state since we use full red box now */
+.nav-item.active::before {
+  display: none;
+}
+
+.label-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--text-sub);
+}
+
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-sm { gap: 8px; }
+.gap-md { gap: 16px; }
+
+/* Utilities */
+.text-sub { color: var(--text-sub); font-size: 14px; }
+.h1 { font-size: 28px; font-weight: 700; line-height: 1.4; color: var(--text-main); }
+.h2 { font-size: 22px; font-weight: 500; color: var(--text-main); }
+
