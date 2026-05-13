@@ -182,7 +182,7 @@ const DashboardPage = ({ session, onLogout }) => {
       <div className="calendar-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <button onClick={() => setViewDate(new Date(year, month - 2, 1))} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&lt;</button>
-          <div style={{ fontWeight: '900', fontSize: '16px' }}>{year}년 {month}월</div>
+          <div style={{ fontWeight: '900', fontSize: '16px', whiteSpace: 'nowrap' }}>{year}년 {month}월</div>
           <button onClick={() => setViewDate(new Date(year, month, 1))} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&gt;</button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px' }}>
@@ -260,7 +260,7 @@ const DashboardPage = ({ session, onLogout }) => {
                         const sameTimeOrders = ordersInHour.filter(o => o.time === order.time);
                         const n = sameTimeOrders.length;
                         return (
-                          <div key={order.id} style={{ flexBasis: n > 1 ? `calc(${100 / n}% - 12px)` : '100%', flexGrow: 1 }}>
+                          <div key={order.id} className="order-card-wrapper" style={{ flexBasis: n > 1 ? `calc(${100 / n}% - 12px)` : '100%', flexGrow: 1 }}>
                             <OrderCard time={order.time} customer={order.customer} items={[order.design]} onClick={() => handleOrderClick(order)} />
                           </div>
                         );
