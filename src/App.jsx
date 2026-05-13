@@ -1,25 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import { supabase } from './supabaseClient';
 import './index.css';
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const handleLogin = () => {
-    setIsAuthenticated(true);
-  };
+  useEffect(() => {
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
+    });
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-  };
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
+    return <div className="loading-container">연동 중...</div>;
+  }
 
   return (
     <div className="app-container">
-      {isAuthenticated ? (
-        <DashboardPage onLogout={handleLogout} />
+      {session ? (
+        <DashboardPage session={session} onLogout={() => supabase.auth.signOut()} />
       ) : (
-        <LoginPage onLogin={handleLogin} />
+        <LoginPage />
       )}
     </div>
   );

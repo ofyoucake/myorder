@@ -1,65 +1,80 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
+import { supabase } from '../supabaseClient';
 
-const LoginPage = ({ onLogin }) => {
+const LoginPage = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    
+    try {
+      if (isSignUp) {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        alert('회원가입 성공! 로그인을 진행해주세요.');
+        setIsSignUp(false);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="login-bg">
-      <div className="card" style={{ 
-        width: '100%', 
-        maxWidth: '440px', 
-        padding: '64px 48px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '48px',
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.05)',
-        border: 'none',
-        borderRadius: '24px',
-        backgroundColor: 'var(--bg-card)',
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ 
-            width: '64px', height: '64px', backgroundColor: 'var(--point)', borderRadius: '14px', 
-            display: 'flex', alignItems: 'center', justifyContent: 'center', 
-            color: 'white', fontWeight: '900', fontSize: '32px', margin: '0 auto 24px',
-          }}>M</div>
-          <h1 style={{ fontSize: '32px', fontWeight: '800', color: 'var(--point)', letterSpacing: '-0.04em' }}>MyOrder</h1>
-          <p style={{ color: 'var(--text-sub)', fontSize: '16px', marginTop: '12px', fontWeight: '500' }}>
-            매장 운영의 새로운 기준<br />관리자 계정으로 로그인하세요.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-md">
-          <Input label="이메일 주소" type="email" placeholder="admin@myorder.com" />
-          <Input label="비밀번호" type="password" placeholder="••••••••" />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-main)' }}>
+      <div className="card" style={{ width: '100%', maxWidth: '400px', padding: '40px', textAlign: 'center' }}>
+        <h2 style={{ fontSize: '28px', fontWeight: '800', color: 'var(--point)', marginBottom: '12px' }}>MyOrder</h2>
+        <p style={{ color: 'var(--text-sub)', marginBottom: '32px' }}>
+          {isSignUp ? '간편하게 가입하고 매장을 관리하세요.' : '다시 오신 것을 환영합니다.'}
+        </p>
+        
+        <form onSubmit={handleAuth} className="flex flex-col gap-md">
+          <Input 
+            label="이메일" 
+            type="email" 
+            value={email} 
+            onChange={(e) => setEmail(e.target.value)} 
+            placeholder="example@email.com" 
+            required
+          />
+          <Input 
+            label="비밀번호" 
+            type="password" 
+            value={password} 
+            onChange={(e) => setPassword(e.target.value)} 
+            placeholder="••••••••" 
+            required
+          />
           
-          <div className="flex flex-col gap-md" style={{ marginTop: '24px' }}>
-            <Button 
-              onClick={onLogin} 
-              size="large"
-              style={{ width: '100%' }}
+          {error && <p style={{ color: 'var(--error)', fontSize: '13px', textAlign: 'left' }}>{error}</p>}
+          
+          <Button type="submit" size="large" style={{ marginTop: '12px' }} disabled={loading}>
+            {loading ? '처리 중...' : (isSignUp ? '회원가입' : '로그인')}
+          </Button>
+        </form>
+        
+        <div style={{ marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
+          <p style={{ fontSize: '14px', color: 'var(--text-sub)' }}>
+            {isSignUp ? '이미 계정이 있으신가요?' : '아직 계정이 없으신가요?'}
+            <button 
+              onClick={() => setIsSignUp(!isSignUp)}
+              style={{ marginLeft: '8px', color: 'var(--point)', fontWeight: '700', border: 'none', background: 'none', cursor: 'pointer' }}
             >
-              로그인하기
-            </Button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', margin: '8px 0' }}>
-              <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--line)' }}></div>
-              <span style={{ fontSize: '12px', color: 'var(--text-sub)', fontWeight: '700' }}>OR</span>
-              <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--line)' }}></div>
-            </div>
-            <Button 
-              variant="secondary" 
-              size="large"
-              style={{ width: '100%' }}
-            >
-              신규 계정 신청
-            </Button>
-          </div>
-        </div>
-
-        <div style={{ textAlign: 'center' }}>
-          <a href="#" style={{ color: 'var(--text-sub)', fontSize: '14px', textDecoration: 'none', fontWeight: '600' }}>
-            계정 정보를 잊으셨나요?
-          </a>
+              {isSignUp ? '로그인하기' : '회원가입하기'}
+            </button>
+          </p>
         </div>
       </div>
     </div>
