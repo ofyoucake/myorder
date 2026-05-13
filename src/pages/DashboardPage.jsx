@@ -205,13 +205,18 @@ const DashboardPage = ({ session, onLogout }) => {
     <div className="flex flex-col gap-md" style={{ position: 'relative' }}>
       <div className="card" style={{ padding: '0', overflow: 'visible', zIndex: 100 }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div className="flex gap-sm" style={{ backgroundColor: 'var(--surface-soft)', padding: '4px', borderRadius: 'var(--radius-full)' }}>
-            {['day', 'period'].map(tab => (
-              <div key={tab} onClick={() => { setActiveTab(tab); setStartDate(null); setEndDate(null); }}
-                style={{ padding: '10px 24px', borderRadius: 'var(--radius-full)', cursor: 'pointer', backgroundColor: activeTab === tab ? 'white' : 'transparent', color: activeTab === tab ? 'var(--text-main)' : 'var(--text-sub)', fontWeight: '600', fontSize: '14px', boxShadow: activeTab === tab ? 'var(--shadow-elevation)' : 'none' }}>
-                {tab === 'day' ? '하루' : '기간'}
-              </div>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div className="flex gap-sm" style={{ backgroundColor: 'var(--surface-soft)', padding: '4px', borderRadius: 'var(--radius-full)' }}>
+              {['day', 'period'].map(tab => (
+                <div key={tab} onClick={() => { setActiveTab(tab); setStartDate(null); setEndDate(null); }}
+                  style={{ padding: '10px 24px', borderRadius: 'var(--radius-full)', cursor: 'pointer', backgroundColor: activeTab === tab ? 'white' : 'transparent', color: activeTab === tab ? 'var(--text-main)' : 'var(--text-sub)', fontWeight: '600', fontSize: '14px', boxShadow: activeTab === tab ? 'var(--shadow-elevation)' : 'none' }}>
+                  {tab === 'day' ? '하루' : '기간'}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
+              {currentOrders.length} 주문
+            </div>
           </div>
           <div style={{ position: 'relative' }}>
             <div onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
@@ -245,14 +250,22 @@ const DashboardPage = ({ session, onLogout }) => {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
-              {Array.from(new Set(currentOrders.map(o => o.dateOnly))).sort().map(date => (
-                <div key={date} className="flex flex-col gap-md">
-                  <h3 style={{ fontSize: '16px', fontWeight: '800' }}>{date}</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
-                    {currentOrders.filter(o => o.dateOnly === date).map(o => <OrderCard key={o.id} {...o} onClick={() => handleOrderClick(o)} />)}
+              {Array.from(new Set(currentOrders.map(o => o.dateOnly))).sort().map(date => {
+                const dailyCount = currentOrders.filter(o => o.dateOnly === date).length;
+                return (
+                  <div key={date} className="flex flex-col gap-md">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <h3 style={{ fontSize: '16px', fontWeight: '800' }}>{date}</h3>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '2px 8px', borderRadius: 'var(--radius-full)' }}>
+                        {dailyCount} 주문
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
+                      {currentOrders.filter(o => o.dateOnly === date).map(o => <OrderCard key={o.id} {...o} onClick={() => handleOrderClick(o)} />)}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {currentOrders.length === 0 && <div style={{ textAlign: 'center', padding: '100px', color: 'var(--text-sub)' }}>선택한 기간에 주문이 없습니다.</div>}
             </div>
           )}
