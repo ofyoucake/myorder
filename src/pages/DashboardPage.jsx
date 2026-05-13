@@ -11,24 +11,27 @@ const DashboardPage = ({ session, onLogout }) => {
   const [activeTab, setActiveTab] = useState('day');
   
   // Calendar Navigation State
-  const [viewDate, setViewDate] = useState(new Date(2026, 4, 8)); // Current viewing month in calendar
+  const [viewDate, setViewDate] = useState(new Date(2026, 4, 8)); // Current viewing month
   
   const [statsRange, setStatsRange] = useState({ start: 1, end: 31 });
-  const [showStatsPicker, setShowStatsPicker] = useState(false);
-  
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState('2026.05.08');
-  const [startDate, setStartDate] = useState(null); // String yyyy.mm.dd
-  const [endDate, setEndDate] = useState(null); // String yyyy.mm.dd
+  const [startDate, setStartDate] = useState(null);
+  const [endDate, setEndDate] = useState(null);
   
-  const [showOrderModal, setShowOrderModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
 
-  // My Page - Google Sheet Database Sync
+  // Database Sync
   const [sheetInfo, setSheetInfo] = useState('');
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  const menuItems = [
+    { id: 'dashboard', label: '대시보드' },
+    { id: 'statistics', label: '통계 분석' },
+    { id: 'mypage', label: '마이페이지' },
+  ];
 
   // Load profile
   useEffect(() => {
@@ -51,7 +54,7 @@ const DashboardPage = ({ session, onLogout }) => {
         .upsert({ id: session.user.id, sheet_url: url, updated_at: new Date().toISOString() });
       if (error) throw error;
       setSheetInfo(url);
-      alert('저장 완료!');
+      alert('설정이 안전하게 저장되었습니다!');
     } catch (err) {
       alert('저장 실패: ' + err.message);
     } finally {
@@ -81,7 +84,7 @@ const DashboardPage = ({ session, onLogout }) => {
               customer: row['이름'] || '미지명',
               contact: row['연락처'] || '-',
               pickupDate: pickupDateRaw,
-              dateOnly: dPart, // yyyy.mm.dd
+              dateOnly: dPart,
               orderDate: row['주문일자'] || '-',
               orderPath: row['주문경로'] || '-',
               items: [row['맛선택'], row['시트'], row['사이즈'], row['크림']].filter(Boolean),
@@ -104,7 +107,6 @@ const DashboardPage = ({ session, onLogout }) => {
 
   useEffect(() => { loadSheetData(sheetInfo); }, [sheetInfo, loadSheetData]);
 
-  // 2. Logic & Filtering
   const handleOrderClick = (order) => { 
     setSelectedOrder(order); 
     setShowDetailModal(true); 
@@ -125,23 +127,18 @@ const DashboardPage = ({ session, onLogout }) => {
   }, [orders, activeTab, selectedDate, startDate, endDate]);
 
   const statsData = useMemo(() => {
-    const start = statsRange.start;
-    const end = statsRange.end;
     const filtered = orders.filter(o => {
       const d = parseInt(o.dateOnly.split('.')[2]);
-      return d >= start && d <= end;
+      return d >= statsRange.start && d <= statsRange.end;
     });
     const totalRevenue = filtered.reduce((sum, o) => sum + o.price, 0);
-    const dailyRevenue = Array(32).fill(0);
     const designCount = {};
     filtered.forEach(o => {
       designCount[o.design] = (designCount[o.design] || 0) + 1;
-      dailyRevenue[parseInt(o.dateOnly.split('.')[2])] += o.price;
     });
-    return { totalRevenue, totalCount: filtered.length, designCount, dailyRevenue };
+    return { totalRevenue, totalCount: filtered.length, designCount };
   }, [orders, statsRange]);
 
-  // 3. Calendar Helper
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
     const month = date.getMonth();
@@ -161,7 +158,6 @@ const DashboardPage = ({ session, onLogout }) => {
     return `${y}.${m}.${d}`;
   };
 
-  // 4. Renderers
   const renderCalendar = (type) => {
     const days = getDaysInMonth(viewDate);
     const year = viewDate.getFullYear();
@@ -188,15 +184,10 @@ const DashboardPage = ({ session, onLogout }) => {
                   setSelectedDate(dateStr);
                   setShowDatePicker(false);
                 } else {
-                  if (!startDate || (startDate && endDate)) {
-                    setStartDate(dateStr); setEndDate(null);
-                  } else {
-                    if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) {
-                      setStartDate(dateStr);
-                    } else {
-                      setEndDate(dateStr);
-                      setTimeout(() => setShowDatePicker(false), 300);
-                    }
+                  if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
+                  else {
+                    if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
+                    else { setEndDate(dateStr); setTimeout(() => setShowDatePicker(false), 300); }
                   }
                 }
               }}
@@ -270,9 +261,45 @@ const DashboardPage = ({ session, onLogout }) => {
     </div>
   );
 
+  const renderStatistics = () => (
+    <div className="flex flex-col gap-md">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+        <div className="card" style={{ padding: '32px' }}>
+          <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 매출</div>
+          <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalRevenue.toLocaleString()}원</div>
+        </div>
+        <div className="card" style={{ padding: '32px' }}>
+          <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 주문수</div>
+          <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalCount}건</div>
+        </div>
+      </div>
+      <div className="card" style={{ padding: '32px' }}>
+        <h3 style={{ marginBottom: '24px', fontSize: '18px', fontWeight: '800' }}>인기 디자인 순위</h3>
+        <div className="flex flex-col gap-sm">
+          {Object.entries(statsData.designCount).sort((a, b) => b[1] - a[1]).map(([name, count]) => (
+            <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
+              <span style={{ fontWeight: '600' }}>{name}</span>
+              <span style={{ fontWeight: '800', color: 'var(--point)' }}>{count}건</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderMyPage = () => (
+    <div className="card" style={{ padding: '48px', maxWidth: '800px' }}>
+      <h3 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '24px' }}>구글 스프레드시트 연동 설정</h3>
+      <p style={{ color: 'var(--text-sub)', fontSize: '14px', marginBottom: '32px' }}>연동할 구글 시트의 주소를 입력해주세요. 정보는 수파베이스 DB에 안전하게 보관됩니다.</p>
+      <div className="flex flex-col gap-md">
+        <Input label="구글 시트 주소" value={sheetInfo} onChange={(e) => setSheetInfo(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." />
+        <Button onClick={() => handleSaveSheetInfo(sheetInfo)} size="large" disabled={loading}>{loading ? '저장 중...' : '설정 저장하기'}</Button>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-main)' }}>
-      {/* Sidebar */}
       <div className="sidebar">
         <div style={{ padding: '0 24px', marginBottom: '32px' }}><h2 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--point)' }}>MyOrder</h2></div>
         <nav className="flex flex-col" style={{ padding: '0 16px' }}>
@@ -283,7 +310,6 @@ const DashboardPage = ({ session, onLogout }) => {
         <div style={{ position: 'absolute', bottom: '32px', width: '100%', padding: '0 24px' }}><Button variant="secondary" onClick={onLogout} style={{ width: '100%', color: 'var(--error)' }}>로그아웃</Button></div>
       </div>
 
-      {/* Main Content */}
       <div style={{ flex: 1, marginLeft: '240px', padding: '48px', maxWidth: '1200px' }}>
         <header style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
           <div>
@@ -293,9 +319,8 @@ const DashboardPage = ({ session, onLogout }) => {
           {activeMenu !== 'mypage' && <Button size="large">새 주문 등록</Button>}
         </header>
 
-        {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'mypage' ? renderMyPage() : <div className="card" style={{ padding: '100px', textAlign: 'center' }}>준비 중인 서비스입니다.</div>}
+        {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'statistics' ? renderStatistics() : renderMyPage()}
 
-        {/* Detail Modal */}
         {showDetailModal && selectedOrder && (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, backdropFilter: 'blur(10px)' }}>
             <div className="card" style={{ width: '100%', maxWidth: '650px', padding: '40px', borderRadius: '32px', position: 'relative', border: 'none', animation: 'slideUp 0.3s ease-out' }}>
