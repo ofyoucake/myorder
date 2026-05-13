@@ -179,7 +179,7 @@ const DashboardPage = ({ session, onLogout }) => {
     const month = viewDate.getMonth() + 1;
 
     return (
-      <div style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 }}>
+      <div className="calendar-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <button onClick={() => setViewDate(new Date(year, month - 2, 1))} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&lt;</button>
           <div style={{ fontWeight: '900', fontSize: '16px' }}>{year}년 {month}월</div>
@@ -241,25 +241,35 @@ const DashboardPage = ({ session, onLogout }) => {
         
         <div style={{ padding: '24px', minHeight: '400px' }}>
           {activeTab === 'day' ? (
-            <div style={{ position: 'relative', display: 'flex', gap: '24px' }}>
-              <div style={{ width: '60px' }}>
-                {Array.from({ length: 12 }, (_, i) => `${i + 9}:00`).map(h => <div key={h} style={{ height: '160px', fontSize: '13px', fontWeight: '700', borderRight: '2px solid var(--line)', textAlign: 'right', paddingRight: '12px' }}>{h}</div>)}
-              </div>
-              <div style={{ flex: 1, position: 'relative' }}>
-                {Array.from({ length: 12 }, (_, i) => `${i + 9}:00`).map(h => <div key={h} style={{ height: '160px', borderBottom: '2px solid var(--line)', opacity: 0.5 }}></div>)}
-                {dashboardOrders.map(order => {
-                  const [h, m] = order.time.split(':').map(Number);
-                  const topOffset = (h - 9) * 160 + (m / 60) * 160;
-                  const sameTimeOrders = dashboardOrders.filter(o => o.time === order.time);
-                  const n = sameTimeOrders.length;
-                  const idx = sameTimeOrders.findIndex(o => o.id === order.id);
-                  return (
-                    <div key={order.id} style={{ position: 'absolute', top: `${topOffset + 8}px`, left: `${(idx / n) * 100}%`, width: `calc(${100 / n}% - 8px)`, zIndex: 2 }}>
-                      <OrderCard time={order.time} customer={order.customer} items={[order.design]} onClick={() => handleOrderClick(order)} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+              {Array.from({ length: 12 }, (_, i) => i + 9).map(hourNum => {
+                const hourStr = `${hourNum}:00`;
+                const ordersInHour = dashboardOrders.filter(o => {
+                  const [h] = o.time.split(':').map(Number);
+                  return h === hourNum;
+                });
+                const hasOrders = ordersInHour.length > 0;
+                
+                return (
+                  <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? '120px' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
+                    <div style={{ width: '60px', padding: '16px 12px 16px 0', borderRight: '2px solid var(--line)', textAlign: 'right', fontSize: '13px', fontWeight: '700', color: hasOrders ? 'var(--text-main)' : 'var(--text-sub)', opacity: hasOrders ? 1 : 0.4 }}>
+                      {hourStr}
                     </div>
-                  );
-                })}
-              </div>
+                    <div style={{ flex: 1, padding: '12px', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-start' }}>
+                      {ordersInHour.sort((a,b) => a.time.localeCompare(b.time)).map(order => {
+                        const sameTimeOrders = ordersInHour.filter(o => o.time === order.time);
+                        const n = sameTimeOrders.length;
+                        return (
+                          <div key={order.id} style={{ flexBasis: n > 1 ? `calc(${100 / n}% - 12px)` : '100%', flexGrow: 1 }}>
+                            <OrderCard time={order.time} customer={order.customer} items={[order.design]} onClick={() => handleOrderClick(order)} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {dashboardOrders.length === 0 && <div style={{ textAlign: 'center', padding: '100px', color: 'var(--text-sub)' }}>선택한 날짜에 주문이 없습니다.</div>}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
@@ -305,7 +315,7 @@ const DashboardPage = ({ session, onLogout }) => {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+      <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
         <div className="card" style={{ padding: '32px' }}>
           <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 매출</div>
           <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalRevenue.toLocaleString()}원</div>
@@ -338,6 +348,14 @@ const DashboardPage = ({ session, onLogout }) => {
       <div className="flex flex-col gap-md">
         <Input label="구글 시트 주소" value={sheetInfo} onChange={(e) => setSheetInfo(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." />
         <Button onClick={() => handleSaveSheetInfo(sheetInfo)} size="large" disabled={loading}>{loading ? '저장 중...' : '설정 저장하기'}</Button>
+        {sheetInfo && (
+          <Button variant="secondary" onClick={() => window.open(sheetInfo, '_blank')} style={{ marginTop: '16px' }}>
+            내 구글 시트 바로가기 ↗
+          </Button>
+        )}
+      </div>
+      <div className="mobile-logout" style={{ display: 'none', marginTop: '48px' }}>
+        <Button variant="secondary" onClick={onLogout} style={{ width: '100%', color: 'var(--error)' }}>로그아웃</Button>
       </div>
     </div>
   );
@@ -351,30 +369,29 @@ const DashboardPage = ({ session, onLogout }) => {
             <div key={item.id} onClick={() => setActiveMenu(item.id)} className={`nav-item ${activeMenu === item.id ? 'active' : ''}`} style={{ padding: '14px 20px', borderRadius: '12px', cursor: 'pointer', marginBottom: '4px', fontWeight: '700' }}>{item.label}</div>
           ))}
         </nav>
-        <div style={{ position: 'absolute', bottom: '32px', width: '100%', padding: '0 24px' }}><Button variant="secondary" onClick={onLogout} style={{ width: '100%', color: 'var(--error)' }}>로그아웃</Button></div>
+        <div className="sidebar-logout" style={{ position: 'absolute', bottom: '32px', width: '100%', padding: '0 24px' }}><Button variant="secondary" onClick={onLogout} style={{ width: '100%', color: 'var(--error)' }}>로그아웃</Button></div>
       </div>
 
-      <div style={{ flex: 1, marginLeft: '240px', padding: '48px', maxWidth: '1200px' }}>
-        <header style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="main-content" style={{ flex: 1, marginLeft: '240px', padding: '48px', maxWidth: '1200px', paddingBottom: '100px' }}>
+        <header className="header-actions" style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
           <div>
             <h1 className="h1" style={{ fontSize: '32px' }}>{menuItems.find(i => i.id === activeMenu)?.label}</h1>
             <p className="text-sub" style={{ marginTop: '8px' }}>{session.user.email}님, 환영합니다!</p>
           </div>
-          {activeMenu !== 'mypage' && <Button size="large">새 주문 등록</Button>}
         </header>
 
         {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'statistics' ? renderStatistics() : renderMyPage()}
 
         {showDetailModal && selectedOrder && (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, backdropFilter: 'blur(10px)' }}>
-            <div className="card" style={{ width: '100%', maxWidth: '700px', padding: '0', borderRadius: '32px', position: 'relative', border: 'none', animation: 'slideUp 0.3s ease-out', overflow: 'hidden' }}>
+            <div className="card modal-content" style={{ width: '90%', maxWidth: '700px', padding: '0', borderRadius: '32px', position: 'relative', border: 'none', animation: 'slideUp 0.3s ease-out', overflow: 'hidden', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ padding: '32px', backgroundColor: 'white' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                   <h2 style={{ fontSize: '22px', fontWeight: '800' }}>주문 상세 내역</h2>
                   <button onClick={() => setShowDetailModal(false)} style={{ border: 'none', background: 'none', fontSize: '28px', cursor: 'pointer', opacity: 0.3 }}>×</button>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div className="modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                   {/* Basic Info Card */}
                   <div style={{ padding: '24px', borderRadius: '20px', border: '1px solid var(--line)', backgroundColor: '#F8FAFC' }}>
                     <h4 style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>📅 기본 정보</h4>
