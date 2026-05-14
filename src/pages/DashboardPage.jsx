@@ -251,7 +251,7 @@ const DashboardPage = ({ session, onLogout }) => {
                 const hasOrders = ordersInHour.length > 0;
                 
                 return (
-                  <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? '140px' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
+                  <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? 'auto' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
                     <div style={{ width: '60px', padding: '16px 12px 16px 0', borderRight: '2px solid var(--line)', textAlign: 'right', fontSize: '13px', fontWeight: '700', color: hasOrders ? 'var(--text-main)' : 'var(--text-sub)', opacity: hasOrders ? 1 : 0.4 }}>
                       {hourStr}
                     </div>
@@ -298,7 +298,7 @@ const DashboardPage = ({ session, onLogout }) => {
                       </span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
-                      {dashboardOrders.filter(o => o.dateOnly === date).map(o => <OrderCard key={o.id} time={o.time} customer={o.customer} items={[o.design]} onClick={() => handleOrderClick(o)} />)}
+                      {dashboardOrders.filter(o => o.dateOnly === date).map(o => <OrderCard key={o.id} time={o.time} customer={o.customer} items={[o.design]} color={o.time.includes(':30') ? '#3B82F6' : 'var(--point)'} onClick={() => handleOrderClick(o)} />)}
                     </div>
                   </div>
                 );
