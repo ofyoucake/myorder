@@ -251,26 +251,31 @@ const DashboardPage = ({ session, onLogout }) => {
                 const hasOrders = ordersInHour.length > 0;
                 
                 return (
-                  <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? '120px' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
-                    <div style={{ width: '60px', padding: '16px 12px 16px 0', borderRight: '2px solid var(--line)', textAlign: 'right', fontSize: '13px', fontWeight: '700', color: hasOrders ? 'var(--text-main)' : 'var(--text-sub)', opacity: hasOrders ? 1 : 0.4, position: 'relative' }}>
+                  <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? '140px' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
+                    <div style={{ width: '60px', padding: '16px 12px 16px 0', borderRight: '2px solid var(--line)', textAlign: 'right', fontSize: '13px', fontWeight: '700', color: hasOrders ? 'var(--text-main)' : 'var(--text-sub)', opacity: hasOrders ? 1 : 0.4 }}>
                       {hourStr}
-                      <div style={{ position: 'absolute', top: '50%', right: '12px', transform: 'translateY(-50%)', fontSize: '10px', color: 'var(--text-sub)', opacity: 0.5, fontWeight: '500' }}>30m</div>
                     </div>
-                    <div style={{ flex: 1, padding: '12px', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-start', position: 'relative' }}>
-                      <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, borderTop: '1px dashed var(--line)', opacity: 0.3, pointerEvents: 'none' }}></div>
+                    <div style={{ flex: 1, padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-start' }}>
                       {ordersInHour.sort((a,b) => a.time.localeCompare(b.time)).map(order => {
                         const isHalfHour = order.time.includes(':30');
                         const sameTimeOrders = ordersInHour.filter(o => o.time === order.time);
                         const n = sameTimeOrders.length;
                         return (
                           <div key={order.id} className="order-card-wrapper" style={{ 
-                            flexBasis: n > 1 ? `calc(${100 / n}% - 12px)` : '100%', 
+                            flexBasis: n > 1 ? `calc(${100 / n}% - 8px)` : '100%', 
                             flexGrow: 1,
-                            paddingLeft: isHalfHour ? '24px' : '0',
-                            position: 'relative'
+                            paddingLeft: isHalfHour ? '32px' : '0',
+                            marginTop: isHalfHour ? '32px' : '4px',
+                            marginBottom: isHalfHour ? '4px' : '32px',
+                            transition: 'all 0.3s ease'
                           }}>
-                            {isHalfHour && <div style={{ position: 'absolute', left: '8px', top: '24px', width: '6px', height: '6px', borderLeft: '2px solid var(--line)', borderBottom: '2px solid var(--line)', opacity: 0.5 }}></div>}
-                            <OrderCard time={order.time} customer={order.customer} items={[order.design]} onClick={() => handleOrderClick(order)} />
+                            <OrderCard 
+                              time={order.time} 
+                              customer={order.customer} 
+                              items={[order.design]} 
+                              color={isHalfHour ? '#3B82F6' : 'var(--point)'}
+                              onClick={() => handleOrderClick(order)} 
+                            />
                           </div>
                         );
                       })}
