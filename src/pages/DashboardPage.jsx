@@ -218,33 +218,8 @@ const DashboardPage = ({ session, onLogout }) => {
                 </div>
               ))}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
-                {dashboardOrders.length} 주문
-              </div>
-              <div 
-                onClick={() => loadSheetData(sheetInfo)} 
-                title="데이터 동기화"
-                style={{ 
-                  cursor: 'pointer', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'white', 
-                  border: '1px solid var(--line)',
-                  color: 'var(--text-sub)',
-                  fontSize: '14px',
-                  boxShadow: 'var(--shadow-elevation)',
-                  transition: 'all 0.2s ease'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'rotate(180deg)'; e.currentTarget.style.color = 'var(--point)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = 'rotate(0deg)'; e.currentTarget.style.color = 'var(--text-sub)'; }}
-              >
-                🔄
-              </div>
+            <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
+              {dashboardOrders.length} 주문
             </div>
           </div>
           <div style={{ position: 'relative' }}>
@@ -417,8 +392,18 @@ const DashboardPage = ({ session, onLogout }) => {
 
       <div className="main-content" style={{ flex: 1, marginLeft: '240px', padding: '48px', maxWidth: '1200px', paddingBottom: '100px' }}>
         <header className="header-actions" style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-          <div>
-            <h1 className="h1" style={{ fontSize: '32px' }}>{menuItems.find(i => i.id === activeMenu)?.label}</h1>
+          <div style={{ width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h1 className="h1" style={{ fontSize: '32px' }}>{menuItems.find(i => i.id === activeMenu)?.label}</h1>
+              <div 
+                onClick={() => loadSheetData(sheetInfo)} 
+                style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-sub)', cursor: 'pointer', backgroundColor: 'var(--surface-soft)', padding: '8px 16px', borderRadius: 'var(--radius-full)', transition: 'all 0.2s' }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--point-light)'; e.currentTarget.style.color = 'var(--point)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-soft)'; e.currentTarget.style.color = 'var(--text-sub)'; }}
+              >
+                새로고침
+              </div>
+            </div>
             <p className="text-sub" style={{ marginTop: '8px' }}>{session.user.email}님, 환영합니다!</p>
           </div>
         </header>
