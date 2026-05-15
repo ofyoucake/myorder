@@ -218,8 +218,33 @@ const DashboardPage = ({ session, onLogout }) => {
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
-              {dashboardOrders.length} 주문
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
+                {dashboardOrders.length} 주문
+              </div>
+              <div 
+                onClick={() => loadSheetData(sheetInfo)} 
+                title="데이터 동기화"
+                style={{ 
+                  cursor: 'pointer', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  width: '32px', 
+                  height: '32px', 
+                  borderRadius: '50%', 
+                  backgroundColor: 'white', 
+                  border: '1px solid var(--line)',
+                  color: 'var(--text-sub)',
+                  fontSize: '14px',
+                  boxShadow: 'var(--shadow-elevation)',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'rotate(180deg)'; e.currentTarget.style.color = 'var(--point)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'rotate(0deg)'; e.currentTarget.style.color = 'var(--text-sub)'; }}
+              >
+                🔄
+              </div>
             </div>
           </div>
           <div style={{ position: 'relative' }}>
@@ -258,6 +283,10 @@ const DashboardPage = ({ session, onLogout }) => {
                     <div style={{ flex: 1, padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-start' }}>
                       {ordersInHour.sort((a,b) => a.time.localeCompare(b.time)).map(order => {
                         const isHalfHour = order.time.includes(':30');
+                        const hasOnTheHour = ordersInHour.some(o => !o.time.includes(':30'));
+                        const hasHalfHour = ordersInHour.some(o => o.time.includes(':30'));
+                        const hasBoth = hasOnTheHour && hasHalfHour;
+                        
                         const sameTimeOrders = ordersInHour.filter(o => o.time === order.time);
                         const n = sameTimeOrders.length;
                         return (
@@ -265,8 +294,8 @@ const DashboardPage = ({ session, onLogout }) => {
                             flexBasis: n > 1 ? `calc(${100 / n}% - 8px)` : '100%', 
                             flexGrow: 1,
                             paddingLeft: isHalfHour ? '32px' : '0',
-                            marginTop: isHalfHour ? '32px' : '4px',
-                            marginBottom: isHalfHour ? '4px' : '32px',
+                            marginTop: isHalfHour ? (hasBoth ? '4px' : '32px') : '4px',
+                            marginBottom: isHalfHour ? '4px' : (hasBoth ? '4px' : '32px'),
                             transition: 'all 0.3s ease'
                           }}>
                             <OrderCard 
