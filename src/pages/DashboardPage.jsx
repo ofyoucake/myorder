@@ -161,6 +161,10 @@ const DashboardPage = ({ session, onLogout }) => {
     });
   };
 
+  const resetFilters = () => {
+    setFilters({ design: [], sheet: [], cream: [], flavor: [], size: [] });
+  };
+
   const toggleAccordion = (type) => {
     setExpandedFilters(prev => ({ ...prev, [type]: !prev[type] }));
   };
@@ -231,7 +235,14 @@ const DashboardPage = ({ session, onLogout }) => {
     
     return (
       <div className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000, maxHeight: '400px', overflowY: 'auto' }}>
-         <h4 style={{ fontWeight: '800', marginBottom: '16px', position: 'sticky', top: '-24px', backgroundColor: 'white', padding: '24px 0 16px 0', marginTop: '-24px', borderBottom: '1px solid var(--line)', zIndex: 10 }}>상세 필터</h4>
+         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', position: 'sticky', top: '-24px', backgroundColor: 'white', padding: '24px 0 16px 0', marginTop: '-24px', borderBottom: '1px solid var(--line)', zIndex: 10 }}>
+           <h4 style={{ fontWeight: '800', margin: 0 }}>상세 필터</h4>
+           {activeFiltersCount > 0 && (
+             <div onClick={resetFilters} style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)', cursor: 'pointer', padding: '4px 8px', borderRadius: '4px', backgroundColor: 'var(--surface-soft)' }}>
+               초기화 ↺
+             </div>
+           )}
+         </div>
          {['design', 'sheet', 'cream', 'flavor', 'size'].map(type => (
            <div key={type} style={{ marginBottom: '12px', borderBottom: '1px solid var(--line-soft)', paddingBottom: '12px' }}>
              <div onClick={() => toggleAccordion(type)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '4px 0' }}>
