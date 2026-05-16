@@ -25,8 +25,9 @@ const DashboardPage = ({ session, onLogout }) => {
   const [showStatsDatePicker, setShowStatsDatePicker] = useState(false);
 
   // Filter State
-  const [filters, setFilters] = useState({ design: [], sheet: [], size: [] });
+  const [filters, setFilters] = useState({ design: [], sheet: [], cream: [], flavor: [], size: [] });
   const [showFilterPicker, setShowFilterPicker] = useState(false);
+  const [expandedFilters, setExpandedFilters] = useState({});
 
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -135,31 +136,49 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const filterOptions = useMemo(() => {
-    const opts = { design: new Set(), sheet: new Set(), size: new Set() };
+    const opts = { design: new Set(), sheet: new Set(), cream: new Set(), flavor: new Set(), size: new Set() };
     orders.forEach(o => {
       if (o.design && o.design !== '-') opts.design.add(o.design);
       if (o.sheet && o.sheet !== '-') opts.sheet.add(o.sheet);
+      if (o.cream && o.cream !== '-') opts.cream.add(o.cream);
+      if (o.flavor && o.flavor !== '-') opts.flavor.add(o.flavor);
       if (o.size && o.size !== '-') opts.size.add(o.size);
     });
-    return { design: [...opts.design].sort(), sheet: [...opts.sheet].sort(), size: [...opts.size].sort() };
+    return { 
+      design: [...opts.design].sort(), 
+      sheet: [...opts.sheet].sort(), 
+      cream: [...opts.cream].sort(), 
+      flavor: [...opts.flavor].sort(), 
+      size: [...opts.size].sort() 
+    };
   }, [orders]);
 
   const toggleFilter = (type, value) => {
     setFilters(prev => {
-      const arr = prev[type];
+      const arr = prev[type] || [];
       if (arr.includes(value)) return { ...prev, [type]: arr.filter(v => v !== value) };
       return { ...prev, [type]: [...arr, value] };
     });
   };
 
+  const toggleAccordion = (type) => {
+    setExpandedFilters(prev => ({ ...prev, [type]: !prev[type] }));
+  };
+
   const applyFilters = (list) => {
     return list.filter(o => {
-      if (filters.design.length > 0 && !filters.design.includes(o.design)) return false;
-      if (filters.sheet.length > 0 && !filters.sheet.includes(o.sheet)) return false;
-      if (filters.size.length > 0 && !filters.size.includes(o.size)) return false;
+      if (filters.design?.length > 0 && !filters.design.includes(o.design)) return false;
+      if (filters.sheet?.length > 0 && !filters.sheet.includes(o.sheet)) return false;
+      if (filters.cream?.length > 0 && !filters.cream.includes(o.cream)) return false;
+      if (filters.flavor?.length > 0 && !filters.flavor.includes(o.flavor)) return false;
+      if (filters.size?.length > 0 && !filters.size.includes(o.size)) return false;
       return true;
     });
   };
+
+  const activeFiltersCount = useMemo(() => {
+    return Object.values(filters).reduce((sum, arr) => sum + (arr?.length || 0), 0);
+  }, [filters]);
 
   const dashboardOrders = useMemo(() => {
     const normalizedSelected = selectedDate.split('.').map(p => p.padStart(2, '0')).join('.');
@@ -207,25 +226,36 @@ const DashboardPage = ({ session, onLogout }) => {
     return `${y}.${m}.${d}`;
   };
 
-  const renderFilterPopup = () => (
-    <div className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 }}>
-       <h4 style={{ fontWeight: '800', marginBottom: '16px' }}>상세 필터</h4>
-       {['design', 'sheet', 'size'].map(type => (
-         <div key={type} style={{ marginBottom: '16px' }}>
-           <div style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-sub)', marginBottom: '8px' }}>
-             {type === 'design' ? '디자인' : type === 'sheet' ? '시트' : '사이즈'}
-           </div>
-           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-             {filterOptions[type].map(val => (
-               <div key={val} onClick={() => toggleFilter(type, val)} style={{ padding: '6px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', backgroundColor: filters[type].includes(val) ? 'var(--point)' : 'var(--surface-soft)', color: filters[type].includes(val) ? 'white' : 'var(--text-sub)' }}>
-                 {val}
+  const renderFilterPopup = () => {
+    const filterLabels = { design: '디자인', sheet: '시트', cream: '크림', flavor: '맛선택', size: '사이즈' };
+    
+    return (
+      <div className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000, maxHeight: '400px', overflowY: 'auto' }}>
+         <h4 style={{ fontWeight: '800', marginBottom: '16px', position: 'sticky', top: '-24px', backgroundColor: 'white', padding: '24px 0 16px 0', marginTop: '-24px', borderBottom: '1px solid var(--line)', zIndex: 10 }}>상세 필터</h4>
+         {['design', 'sheet', 'cream', 'flavor', 'size'].map(type => (
+           <div key={type} style={{ marginBottom: '12px', borderBottom: '1px solid var(--line-soft)', paddingBottom: '12px' }}>
+             <div onClick={() => toggleAccordion(type)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '4px 0' }}>
+               <div style={{ fontSize: '14px', fontWeight: '800', color: filters[type]?.length > 0 ? 'var(--point)' : 'var(--text-main)' }}>
+                 {filterLabels[type]} {filters[type]?.length > 0 && `(${filters[type].length})`}
                </div>
-             ))}
+               <div style={{ fontSize: '10px', color: 'var(--text-sub)' }}>
+                 {expandedFilters[type] ? '▲' : '▼'}
+               </div>
+             </div>
+             {expandedFilters[type] && (
+               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+                 {filterOptions[type]?.length > 0 ? filterOptions[type].map(val => (
+                   <div key={val} onClick={() => toggleFilter(type, val)} style={{ padding: '6px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', backgroundColor: filters[type]?.includes(val) ? 'var(--point)' : 'var(--surface-soft)', color: filters[type]?.includes(val) ? 'white' : 'var(--text-sub)' }}>
+                     {val}
+                   </div>
+                 )) : <div style={{ fontSize: '12px', color: 'var(--text-sub)' }}>옵션 없음</div>}
+               </div>
+             )}
            </div>
-         </div>
-       ))}
-    </div>
-  );
+         ))}
+      </div>
+    );
+  };
 
   const renderCalendar = (type, currentStart, currentEnd, onSelect, inline = false) => {
     const days = getDaysInMonth(viewDate);
@@ -305,8 +335,8 @@ const DashboardPage = ({ session, onLogout }) => {
               })}
             </div>
             <div style={{ position: 'relative' }}>
-              <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: (filters.design.length || filters.sheet.length || filters.size.length) ? 'var(--point)' : 'inherit' }}>
-                ⚙️ 필터 {(filters.design.length || filters.sheet.length || filters.size.length) > 0 && `(${(filters.design.length + filters.sheet.length + filters.size.length)})`}
+              <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
+                ⚙️ 필터 {activeFiltersCount > 0 && `(${activeFiltersCount})`}
               </div>
               {showFilterPicker && renderFilterPopup()}
             </div>
@@ -407,8 +437,8 @@ const DashboardPage = ({ session, onLogout }) => {
             })}
           </div>
           <div style={{ position: 'relative' }}>
-            <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: (filters.design.length || filters.sheet.length || filters.size.length) ? 'var(--point)' : 'inherit' }}>
-              ⚙️ 필터 {(filters.design.length || filters.sheet.length || filters.size.length) > 0 && `(${(filters.design.length + filters.sheet.length + filters.size.length)})`}
+            <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
+              ⚙️ 필터 {activeFiltersCount > 0 && `(${activeFiltersCount})`}
             </div>
             {showFilterPicker && renderFilterPopup()}
           </div>
