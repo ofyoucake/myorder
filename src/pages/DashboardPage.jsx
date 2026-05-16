@@ -24,6 +24,10 @@ const DashboardPage = ({ session, onLogout }) => {
   const [statsEndDate, setStatsEndDate] = useState(null);
   const [showStatsDatePicker, setShowStatsDatePicker] = useState(false);
 
+  // Filter State
+  const [filters, setFilters] = useState({ design: [], sheet: [], size: [] });
+  const [showFilterPicker, setShowFilterPicker] = useState(false);
+
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
 
@@ -91,15 +95,15 @@ const DashboardPage = ({ session, onLogout }) => {
             return {
               id: `sheet-${index}`,
               customer: row[0] || '미지명', // A
-              design: row[1] || '-', // B
+              design: (row[1] || '-').replace(/\s+/g, ''), // B
               orderDate: row[2] || '-', // C
               pickupDate: pickupDateRaw, // D
               time: tPart || '00:00',
               dateOnly: normalizedDate,
-              flavor: row[4] || '-', // E
-              sheet: row[5] || '-', // F
-              size: row[6] || '-', // G
-              cream: row[7] || '-', // H
+              flavor: (row[4] || '-').replace(/\s+/g, ''), // E
+              sheet: (row[5] || '-').replace(/\s+/g, ''), // F
+              size: (row[6] || '-').replace(/\s+/g, ''), // G
+              cream: (row[7] || '-').replace(/\s+/g, ''), // H
               requests: row[8] || '-', // I
               specialNotes: row[9] || '-', // J
               orderPath: row[10] || '-', // K
@@ -130,20 +134,50 @@ const DashboardPage = ({ session, onLogout }) => {
     return d >= s && d <= e;
   };
 
+  const filterOptions = useMemo(() => {
+    const opts = { design: new Set(), sheet: new Set(), size: new Set() };
+    orders.forEach(o => {
+      if (o.design && o.design !== '-') opts.design.add(o.design);
+      if (o.sheet && o.sheet !== '-') opts.sheet.add(o.sheet);
+      if (o.size && o.size !== '-') opts.size.add(o.size);
+    });
+    return { design: [...opts.design].sort(), sheet: [...opts.sheet].sort(), size: [...opts.size].sort() };
+  }, [orders]);
+
+  const toggleFilter = (type, value) => {
+    setFilters(prev => {
+      const arr = prev[type];
+      if (arr.includes(value)) return { ...prev, [type]: arr.filter(v => v !== value) };
+      return { ...prev, [type]: [...arr, value] };
+    });
+  };
+
+  const applyFilters = (list) => {
+    return list.filter(o => {
+      if (filters.design.length > 0 && !filters.design.includes(o.design)) return false;
+      if (filters.sheet.length > 0 && !filters.sheet.includes(o.sheet)) return false;
+      if (filters.size.length > 0 && !filters.size.includes(o.size)) return false;
+      return true;
+    });
+  };
+
   const dashboardOrders = useMemo(() => {
     const normalizedSelected = selectedDate.split('.').map(p => p.padStart(2, '0')).join('.');
+    let base = [];
     if (activeTab === 'day') {
-      return orders.filter(o => o.dateOnly === normalizedSelected);
+      base = orders.filter(o => o.dateOnly === normalizedSelected);
     } else {
       if (!startDate || !endDate) return [];
-      return orders.filter(o => isDateInRange(o.dateOnly, startDate, endDate));
+      base = orders.filter(o => isDateInRange(o.dateOnly, startDate, endDate));
     }
-  }, [orders, activeTab, selectedDate, startDate, endDate]);
+    return applyFilters(base);
+  }, [orders, activeTab, selectedDate, startDate, endDate, filters]);
 
   const statsOrders = useMemo(() => {
     if (!statsStartDate || !statsEndDate) return [];
-    return orders.filter(o => isDateInRange(o.dateOnly, statsStartDate, statsEndDate));
-  }, [orders, statsStartDate, statsEndDate]);
+    const base = orders.filter(o => isDateInRange(o.dateOnly, statsStartDate, statsEndDate));
+    return applyFilters(base);
+  }, [orders, statsStartDate, statsEndDate, filters]);
 
   const statsData = useMemo(() => {
     const totalRevenue = statsOrders.reduce((sum, o) => sum + o.price, 0);
@@ -173,13 +207,44 @@ const DashboardPage = ({ session, onLogout }) => {
     return `${y}.${m}.${d}`;
   };
 
-  const renderCalendar = (type, currentStart, currentEnd, onSelect) => {
+  const renderFilterPopup = () => (
+    <div className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 }}>
+       <h4 style={{ fontWeight: '800', marginBottom: '16px' }}>상세 필터</h4>
+       {['design', 'sheet', 'size'].map(type => (
+         <div key={type} style={{ marginBottom: '16px' }}>
+           <div style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-sub)', marginBottom: '8px' }}>
+             {type === 'design' ? '디자인' : type === 'sheet' ? '시트' : '사이즈'}
+           </div>
+           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+             {filterOptions[type].map(val => (
+               <div key={val} onClick={() => toggleFilter(type, val)} style={{ padding: '6px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', backgroundColor: filters[type].includes(val) ? 'var(--point)' : 'var(--surface-soft)', color: filters[type].includes(val) ? 'white' : 'var(--text-sub)' }}>
+                 {val}
+               </div>
+             ))}
+           </div>
+         </div>
+       ))}
+    </div>
+  );
+
+  const renderCalendar = (type, currentStart, currentEnd, onSelect, inline = false) => {
     const days = getDaysInMonth(viewDate);
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth() + 1;
+    
+    const getTodayKST = () => {
+      const now = new Date();
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      return new Date(utc + (9 * 3600000));
+    };
+    const today = getTodayKST();
+
+    const wrapperStyle = inline 
+      ? { width: '320px', backgroundColor: 'white', borderRadius: '24px', padding: '24px', border: '1px solid var(--line)', boxShadow: 'var(--shadow-elevation)' }
+      : { position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 };
 
     return (
-      <div className="calendar-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000 }}>
+      <div className={inline ? "calendar-inline" : "calendar-popup"} style={wrapperStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <button onClick={() => setViewDate(new Date(year, month - 2, 1))} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&lt;</button>
           <div style={{ fontWeight: '900', fontSize: '16px', whiteSpace: 'nowrap' }}>{year}년 {month}월</div>
@@ -192,10 +257,11 @@ const DashboardPage = ({ session, onLogout }) => {
             const dateStr = formatDate(date);
             const isSelected = type === 'day' ? selectedDate === dateStr : (dateStr === currentStart || dateStr === currentEnd);
             const isInRange = type !== 'day' && currentStart && currentEnd && new Date(dateStr.replace(/\./g,'-')) > new Date(currentStart.replace(/\./g,'-')) && new Date(dateStr.replace(/\./g,'-')) < new Date(currentEnd.replace(/\./g,'-'));
+            const isToday = date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
             
             return (
               <div key={dateStr} onClick={() => onSelect(dateStr)}
-              style={{ padding: '10px 0', borderRadius: '12px', cursor: 'pointer', fontSize: '13px', fontWeight: '700', backgroundColor: isSelected ? 'var(--point)' : (isInRange ? 'var(--point-light)' : 'transparent'), color: isSelected ? 'white' : (isInRange ? 'var(--point)' : 'var(--text-main)') }}>
+              style={{ padding: '10px 0', borderRadius: isToday && !isSelected && !isInRange ? '50%' : '12px', cursor: 'pointer', fontSize: '13px', fontWeight: '700', backgroundColor: isSelected ? 'var(--point)' : (isInRange ? 'var(--point-light)' : (isToday ? '#f1f5f9' : 'transparent')), color: isSelected ? 'white' : (isInRange ? 'var(--point)' : 'var(--text-main)') }}>
                 {date.getDate()}
               </div>
             );
@@ -222,20 +288,28 @@ const DashboardPage = ({ session, onLogout }) => {
               {dashboardOrders.length} 주문
             </div>
           </div>
-          <div style={{ position: 'relative' }}>
-            <div onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
-              📅 {activeTab === 'day' ? selectedDate : (startDate && endDate ? `${startDate} - ${endDate}` : '기간 선택')}
-            </div>
-            {showDatePicker && renderCalendar(activeTab, startDate, endDate, (dateStr) => {
-              if (activeTab === 'day') { setSelectedDate(dateStr); setShowDatePicker(false); }
-              else {
-                if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <div className="mobile-only" style={{ position: 'relative' }}>
+              <div onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
+                📅 {activeTab === 'day' ? selectedDate : (startDate && endDate ? `${startDate} - ${endDate}` : '기간 선택')}
+              </div>
+              {showDatePicker && renderCalendar(activeTab, startDate, endDate, (dateStr) => {
+                if (activeTab === 'day') { setSelectedDate(dateStr); setShowDatePicker(false); }
                 else {
-                  if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
-                  else { setEndDate(dateStr); setTimeout(() => setShowDatePicker(false), 300); }
+                  if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
+                  else {
+                    if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
+                    else { setEndDate(dateStr); setTimeout(() => setShowDatePicker(false), 300); }
+                  }
                 }
-              }
-            })}
+              })}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: (filters.design.length || filters.sheet.length || filters.size.length) ? 'var(--point)' : 'inherit' }}>
+                ⚙️ 필터 {(filters.design.length || filters.sheet.length || filters.size.length) > 0 && `(${(filters.design.length + filters.sheet.length + filters.size.length)})`}
+              </div>
+              {showFilterPicker && renderFilterPopup()}
+            </div>
           </div>
         </div>
         
@@ -319,17 +393,25 @@ const DashboardPage = ({ session, onLogout }) => {
     <div className="flex flex-col gap-md">
       <div className="card" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', overflow: 'visible' }}>
         <h3 style={{ fontSize: '16px', fontWeight: '800' }}>기간별 통계 조회</h3>
-        <div style={{ position: 'relative' }}>
-          <div onClick={() => setShowStatsDatePicker(!showStatsDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
-            📅 {statsStartDate && statsEndDate ? `${statsStartDate} - ${statsEndDate}` : '통계 기간 선택'}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="mobile-only" style={{ position: 'relative' }}>
+            <div onClick={() => setShowStatsDatePicker(!showStatsDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
+              📅 {statsStartDate && statsEndDate ? `${statsStartDate} - ${statsEndDate}` : '통계 기간 선택'}
+            </div>
+            {showStatsDatePicker && renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
+              if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
+              else {
+                if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
+                else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
+              }
+            })}
           </div>
-          {showStatsDatePicker && renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
-            if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
-            else {
-              if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
-              else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
-            }
-          })}
+          <div style={{ position: 'relative' }}>
+            <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: (filters.design.length || filters.sheet.length || filters.size.length) ? 'var(--point)' : 'inherit' }}>
+              ⚙️ 필터 {(filters.design.length || filters.sheet.length || filters.size.length) > 0 && `(${(filters.design.length + filters.sheet.length + filters.size.length)})`}
+            </div>
+            {showFilterPicker && renderFilterPopup()}
+          </div>
         </div>
       </div>
 
@@ -391,20 +473,51 @@ const DashboardPage = ({ session, onLogout }) => {
       </div>
 
       <div className="main-content" style={{ flex: 1, marginLeft: '240px', padding: '48px', maxWidth: '1200px', paddingBottom: '100px' }}>
-        <header className="header-actions" style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+        <header className="header-actions" style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h1 className="h1" style={{ fontSize: '32px' }}>{menuItems.find(i => i.id === activeMenu)?.label}</h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h1 className="h1" style={{ fontSize: '32px' }}>{menuItems.find(i => i.id === activeMenu)?.label}</h1>
+                <p className="text-sub" style={{ marginTop: '8px' }}>{session.user.email}님, 환영합니다!</p>
+              </div>
+
+              <div className="desktop-only" style={{ flex: 1, display: 'flex', justifyContent: 'center', margin: '0 24px' }}>
+                {activeMenu === 'dashboard' && renderCalendar(
+                  activeTab, startDate, endDate,
+                  (dateStr) => {
+                    if (activeTab === 'day') { setSelectedDate(dateStr); }
+                    else {
+                      if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
+                      else {
+                        if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
+                        else { setEndDate(dateStr); }
+                      }
+                    }
+                  },
+                  true
+                )}
+                {activeMenu === 'statistics' && renderCalendar(
+                  'period', statsStartDate, statsEndDate,
+                  (dateStr) => {
+                    if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
+                    else {
+                      if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
+                      else { setStatsEndDate(dateStr); }
+                    }
+                  },
+                  true
+                )}
+              </div>
+
               <div 
                 onClick={() => loadSheetData(sheetInfo)} 
-                style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-sub)', cursor: 'pointer', backgroundColor: 'var(--surface-soft)', padding: '8px 16px', borderRadius: 'var(--radius-full)', transition: 'all 0.2s' }}
+                style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-sub)', cursor: 'pointer', backgroundColor: 'var(--surface-soft)', padding: '8px 16px', borderRadius: 'var(--radius-full)', transition: 'all 0.2s', marginTop: '4px' }}
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--point-light)'; e.currentTarget.style.color = 'var(--point)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-soft)'; e.currentTarget.style.color = 'var(--text-sub)'; }}
               >
                 새로고침
               </div>
             </div>
-            <p className="text-sub" style={{ marginTop: '8px' }}>{session.user.email}님, 환영합니다!</p>
           </div>
         </header>
 

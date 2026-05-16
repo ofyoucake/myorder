@@ -156,6 +156,24 @@ body {
 .gap-md { gap: 16px; }
 
 /* Utilities */
+.table-header {
+  color: var(--text-sub);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.table-cell {
+  padding: 16px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 14px;
+}
+
+.mobile-only {
+  display: none !important;
+}
+
 .text-sub { color: var(--text-sub); font-size: 14px; }
 .h1 { font-size: 28px; font-weight: 700; line-height: 1.4; color: var(--text-main); }
 .h2 { font-size: 22px; font-weight: 500; color: var(--text-main); }
@@ -246,6 +264,14 @@ body {
   /* Force cards to stack on mobile instead of splitting */
   .order-card-wrapper {
     flex-basis: 100% !important;
+  }
+
+  .mobile-only {
+    display: flex !important;
+  }
+
+  .desktop-only {
+    display: none !important;
   }
 }
 
