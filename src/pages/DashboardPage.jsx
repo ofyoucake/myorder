@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { OrderCard } from '../components/OrderCard';
@@ -36,6 +36,22 @@ const DashboardPage = ({ session, onLogout }) => {
   const [sheetInfo, setSheetInfo] = useState('');
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  const filterRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (filterRef.current && !filterRef.current.contains(event.target) && !event.target.closest('.filter-toggle-btn')) {
+        setShowFilterPicker(false);
+      }
+    };
+    if (showFilterPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showFilterPicker]);
 
   const menuItems = [
     { id: 'dashboard', label: '대시보드' },
@@ -234,7 +250,7 @@ const DashboardPage = ({ session, onLogout }) => {
     const filterLabels = { design: '디자인', sheet: '시트', cream: '크림', flavor: '맛선택', size: '사이즈' };
     
     return (
-      <div className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000, maxHeight: '400px', overflowY: 'auto' }}>
+      <div ref={filterRef} className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000, maxHeight: '400px', overflowY: 'auto' }}>
          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', position: 'sticky', top: '-24px', backgroundColor: 'white', padding: '24px 0 16px 0', marginTop: '-24px', borderBottom: '1px solid var(--line)', zIndex: 10 }}>
            <h4 style={{ fontWeight: '800', margin: 0 }}>상세 필터</h4>
            {activeFiltersCount > 0 && (
@@ -319,7 +335,14 @@ const DashboardPage = ({ session, onLogout }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div className="flex gap-sm" style={{ backgroundColor: 'var(--surface-soft)', padding: '4px', borderRadius: 'var(--radius-full)' }}>
               {['day', 'period'].map(tab => (
-                <div key={tab} onClick={() => { setActiveTab(tab); setStartDate(null); setEndDate(null); }}
+                <div key={tab} onClick={() => {
+                  if (activeTab !== tab) {
+                    setActiveTab(tab); 
+                    setStartDate(null); 
+                    setEndDate(null); 
+                    resetFilters();
+                  }
+                }}
                   style={{ padding: '10px 24px', borderRadius: 'var(--radius-full)', cursor: 'pointer', backgroundColor: activeTab === tab ? 'white' : 'transparent', color: activeTab === tab ? 'var(--text-main)' : 'var(--text-sub)', fontWeight: '600', fontSize: '14px', boxShadow: activeTab === tab ? 'var(--shadow-elevation)' : 'none' }}>
                   {tab === 'day' ? '하루' : '기간'}
                 </div>
@@ -346,7 +369,7 @@ const DashboardPage = ({ session, onLogout }) => {
               })}
             </div>
             <div style={{ position: 'relative' }}>
-              <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
+              <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
                 ⚙️ 필터 {activeFiltersCount > 0 && `(${activeFiltersCount})`}
               </div>
               {showFilterPicker && renderFilterPopup()}
@@ -448,7 +471,7 @@ const DashboardPage = ({ session, onLogout }) => {
             })}
           </div>
           <div style={{ position: 'relative' }}>
-            <div onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
+            <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
               ⚙️ 필터 {activeFiltersCount > 0 && `(${activeFiltersCount})`}
             </div>
             {showFilterPicker && renderFilterPopup()}
