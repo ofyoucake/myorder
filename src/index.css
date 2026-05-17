@@ -58,6 +58,11 @@
   letter-spacing: var(--ls-tight);
 }
 
+html, body {
+  width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   font-family: var(--font-main);
   background-color: var(--bg-main);
@@ -273,5 +278,10 @@ body {
   .desktop-only {
     display: none !important;
   }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 

@@ -250,7 +250,7 @@ const DashboardPage = ({ session, onLogout }) => {
     const filterLabels = { design: '디자인', sheet: '시트', cream: '크림', flavor: '맛선택', size: '사이즈' };
     
     return (
-      <div ref={filterRef} className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000, maxHeight: '400px', overflowY: 'auto' }}>
+      <div ref={filterRef} className="filter-popup" style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '320px', maxWidth: 'calc(100vw - 32px)', backgroundColor: 'white', borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.18)', border: '1px solid var(--line)', padding: '24px', zIndex: 2000, maxHeight: '400px', overflowY: 'auto' }}>
          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', position: 'sticky', top: '-24px', backgroundColor: 'white', padding: '24px 0 16px 0', marginTop: '-24px', borderBottom: '1px solid var(--line)', zIndex: 10 }}>
            <h4 style={{ fontWeight: '800', margin: 0 }}>상세 필터</h4>
            {activeFiltersCount > 0 && (
@@ -637,6 +637,13 @@ const DashboardPage = ({ session, onLogout }) => {
           </div>
         )}
       </div>
+
+      {loading && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(255, 255, 255, 0.8)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(8px)' }}>
+          <div style={{ width: '48px', height: '48px', border: '4px solid var(--point-light)', borderTop: '4px solid var(--point)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
+          <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)' }}>구글 시트에서 주문 데이터 동기화 중...</div>
+        </div>
+      )}
       <style>{`
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
       `}</style>
