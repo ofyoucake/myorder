@@ -261,11 +261,16 @@ body {
   }
   
   .calendar-popup {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    right: auto !important;
+    bottom: auto !important;
     width: 320px !important;
     max-width: 90vw !important;
-    right: 0 !important;
-    left: auto !important;
-    top: calc(100% + 8px) !important;
+    z-index: 2000 !important;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.4) !important;
   }
   
   .modal-content > div {

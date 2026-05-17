@@ -358,20 +358,37 @@ const DashboardPage = ({ session, onLogout }) => {
               <div className="dash-date-btn" onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
                 📅 {activeTab === 'day' ? selectedDate : (startDate && endDate ? `${startDate} - ${endDate}` : '기간 선택')}
               </div>
-              {showDatePicker && renderCalendar(activeTab, startDate, endDate, (dateStr) => {
-                if (activeTab === 'day') { setSelectedDate(dateStr); setShowDatePicker(false); }
-                else {
-                  if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
-                  else {
-                    if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
-                    else { setEndDate(dateStr); setTimeout(() => setShowDatePicker(false), 300); }
-                  }
-                }
-              })}
+              {showDatePicker && (
+                <>
+                  <div 
+                    onClick={() => setShowDatePicker(false)} 
+                    style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      width: '100vw',
+                      height: '100vh',
+                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                      zIndex: 1999,
+                      backdropFilter: 'blur(4px)'
+                    }} 
+                  />
+                  {renderCalendar(activeTab, startDate, endDate, (dateStr) => {
+                    if (activeTab === 'day') { setSelectedDate(dateStr); setShowDatePicker(false); }
+                    else {
+                      if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
+                      else {
+                        if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
+                        else { setEndDate(dateStr); setTimeout(() => setShowDatePicker(false), 300); }
+                      }
+                    }
+                  })}
+                </>
+              )}
             </div>
             <div style={{ position: 'relative' }}>
               <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
-                ⚙️ 필터 {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+                🎛️ <span className="desktop-only" style={{ marginLeft: '4px' }}>필터</span>{activeFiltersCount > 0 && <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--point)', marginLeft: '2px' }}>({activeFiltersCount})</span>}
               </div>
               {showFilterPicker && renderFilterPopup()}
             </div>
@@ -463,17 +480,34 @@ const DashboardPage = ({ session, onLogout }) => {
             <div onClick={() => setShowStatsDatePicker(!showStatsDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
               📅 {statsStartDate && statsEndDate ? `${statsStartDate} - ${statsEndDate}` : '통계 기간 선택'}
             </div>
-            {showStatsDatePicker && renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
-              if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
-              else {
-                if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
-                else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
-              }
-            })}
+            {showStatsDatePicker && (
+              <>
+                <div 
+                  onClick={() => setShowStatsDatePicker(false)} 
+                  style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    width: '100vw',
+                    height: '100vh',
+                    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                    zIndex: 1999,
+                    backdropFilter: 'blur(4px)'
+                  }} 
+                />
+                {renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
+                  if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
+                  else {
+                    if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
+                    else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
+                  }
+                })}
+              </>
+            )}
           </div>
           <div style={{ position: 'relative' }}>
             <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
-              ⚙️ 필터 {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+              🎛️ <span className="desktop-only" style={{ marginLeft: '4px' }}>필터</span>{activeFiltersCount > 0 && <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--point)', marginLeft: '2px' }}>({activeFiltersCount})</span>}
             </div>
             {showFilterPicker && renderFilterPopup()}
           </div>
