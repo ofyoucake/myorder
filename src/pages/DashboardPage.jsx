@@ -410,7 +410,7 @@ const DashboardPage = ({ session, onLogout }) => {
                             marginTop: isHalfHour ? (hasBoth ? '4px' : '32px') : '4px',
                             marginBottom: isHalfHour ? '4px' : (hasBoth ? '4px' : '32px'),
                             transition: 'all 0.3s ease'
-                          }}>
+                          }} className={`order-card-wrapper ${isHalfHour ? 'half-hour-card' : ''}`}>
                             <OrderCard 
                               time={order.time} 
                               customer={order.customer} 
@@ -439,7 +439,7 @@ const DashboardPage = ({ session, onLogout }) => {
                         {dailyCount} 주문
                       </span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
+                    <div className="period-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
                       {dashboardOrders.filter(o => o.dateOnly === date).map(o => <OrderCard key={o.id} time={o.time} customer={o.customer} items={[o.design]} color={o.time.includes(':30') ? '#3B82F6' : 'var(--point)'} onClick={() => handleOrderClick(o)} />)}
                     </div>
                   </div>

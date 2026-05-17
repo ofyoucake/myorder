@@ -60,6 +60,7 @@
 
 html, body {
   width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -282,6 +283,16 @@ body {
 
   .desktop-only {
     display: none !important;
+  }
+
+  /* Period view: force single column so cards don't overflow */
+  .period-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Half-hour card: remove left indent on mobile */
+  .half-hour-card {
+    padding-left: 0 !important;
   }
 }
 
