@@ -331,7 +331,7 @@ const DashboardPage = ({ session, onLogout }) => {
   const renderDashboard = () => (
     <div className="flex flex-col gap-md" style={{ position: 'relative' }}>
       <div className="card" style={{ padding: '0', overflow: 'visible', zIndex: 100 }}>
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="dash-header-bar" style={{ padding: '16px 24px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div className="flex gap-sm" style={{ backgroundColor: 'var(--surface-soft)', padding: '4px', borderRadius: 'var(--radius-full)' }}>
               {['day', 'period'].map(tab => (
@@ -343,18 +343,19 @@ const DashboardPage = ({ session, onLogout }) => {
                     resetFilters();
                   }
                 }}
+                  className="dash-tab"
                   style={{ padding: '10px 24px', borderRadius: 'var(--radius-full)', cursor: 'pointer', backgroundColor: activeTab === tab ? 'white' : 'transparent', color: activeTab === tab ? 'var(--text-main)' : 'var(--text-sub)', fontWeight: '600', fontSize: '14px', boxShadow: activeTab === tab ? 'var(--shadow-elevation)' : 'none' }}>
                   {tab === 'day' ? '하루' : '기간'}
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
+            <div className="dash-order-badge" style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
               {dashboardOrders.length} 주문
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <div className="mobile-only" style={{ position: 'relative' }}>
-              <div onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
+              <div className="dash-date-btn" onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
                 📅 {activeTab === 'day' ? selectedDate : (startDate && endDate ? `${startDate} - ${endDate}` : '기간 선택')}
               </div>
               {showDatePicker && renderCalendar(activeTab, startDate, endDate, (dateStr) => {

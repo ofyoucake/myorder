@@ -294,6 +294,29 @@ body {
   .half-hour-card {
     padding-left: 0 !important;
   }
+
+  /* Dashboard header: shrink padding and fonts to fit mobile screen */
+  .dash-header-bar {
+    padding: 10px 12px !important;
+  }
+  .dash-tab {
+    padding: 5px 10px !important;
+    font-size: 12px !important;
+  }
+  .dash-order-badge {
+    padding: 3px 8px !important;
+    font-size: 12px !important;
+  }
+  .dash-date-btn {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    gap: 4px !important;
+  }
+  .filter-toggle-btn {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    gap: 4px !important;
+  }
 }
 
 @keyframes spin {
