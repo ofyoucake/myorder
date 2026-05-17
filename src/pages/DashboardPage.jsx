@@ -536,7 +536,7 @@ const DashboardPage = ({ session, onLogout }) => {
         <div className="sidebar-logout" style={{ position: 'absolute', bottom: '32px', width: '100%', padding: '0 24px' }}><Button variant="secondary" onClick={onLogout} style={{ width: '100%', color: 'var(--error)' }}>로그아웃</Button></div>
       </div>
 
-      <div className="main-content" style={{ flex: 1, marginLeft: '240px', padding: '48px', maxWidth: '1200px', paddingBottom: '100px' }}>
+      <div className="main-content" style={{ flex: 1, maxWidth: '1200px', paddingBottom: '100px' }}>
         <header className="header-actions" style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ width: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
