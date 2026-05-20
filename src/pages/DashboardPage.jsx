@@ -397,54 +397,66 @@ const DashboardPage = ({ session, onLogout }) => {
         
         <div style={{ padding: '24px', minHeight: '400px' }}>
           {activeTab === 'day' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-              {Array.from({ length: 12 }, (_, i) => i + 9).map(hourNum => {
-                const hourStr = `${hourNum}:00`;
-                const ordersInHour = dashboardOrders.filter(o => {
-                  const [h] = o.time.split(':').map(Number);
-                  return h === hourNum;
-                });
-                const hasOrders = ordersInHour.length > 0;
-                
-                return (
-                  <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? 'auto' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
-                    <div style={{ width: '60px', padding: '16px 12px 16px 0', borderRight: '2px solid var(--line)', textAlign: 'right', fontSize: '13px', fontWeight: '700', color: hasOrders ? 'var(--text-main)' : 'var(--text-sub)', opacity: hasOrders ? 1 : 0.4 }}>
-                      {hourStr}
-                    </div>
-                    <div style={{ flex: 1, padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-start' }}>
-                      {ordersInHour.sort((a,b) => a.time.localeCompare(b.time)).map(order => {
-                        const isHalfHour = order.time.includes(':30');
-                        const hasOnTheHour = ordersInHour.some(o => !o.time.includes(':30'));
-                        const hasHalfHour = ordersInHour.some(o => o.time.includes(':30'));
-                        const hasBoth = hasOnTheHour && hasHalfHour;
-                        
-                        const sameTimeOrders = ordersInHour.filter(o => o.time === order.time);
-                        const n = sameTimeOrders.length;
-                        return (
-                          <div key={order.id} className="order-card-wrapper" style={{ 
-                            flexBasis: n > 1 ? `calc(${100 / n}% - 8px)` : '100%', 
-                            flexGrow: 1,
-                            paddingLeft: isHalfHour ? '32px' : '0',
-                            marginTop: isHalfHour ? (hasBoth ? '4px' : '32px') : '4px',
-                            marginBottom: isHalfHour ? '4px' : (hasBoth ? '4px' : '32px'),
-                            transition: 'all 0.3s ease'
-                          }} className={`order-card-wrapper ${isHalfHour ? 'half-hour-card' : ''}`}>
-                            <OrderCard 
-                              time={order.time} 
-                              customer={order.customer} 
-                              items={[order.design]} 
-                              color={isHalfHour ? '#3B82F6' : 'var(--point)'}
-                              onClick={() => handleOrderClick(order)} 
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              {dashboardOrders.length === 0 && <div style={{ textAlign: 'center', padding: '100px', color: 'var(--text-sub)' }}>선택한 날짜에 주문이 없습니다.</div>}
-            </div>
+           (() => {
+             const orderHours = dashboardOrders.map(o => {
+               const [h] = o.time.split(':').map(Number);
+               return h;
+             });
+             const startHour = orderHours.length > 0 ? Math.min(9, ...orderHours) : 9;
+             const endHour = orderHours.length > 0 ? Math.max(20, ...orderHours) : 20;
+             const dynamicHours = Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i);
+
+             return (
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                 {dynamicHours.map(hourNum => {
+                   const hourStr = `${hourNum}:00`;
+                   const ordersInHour = dashboardOrders.filter(o => {
+                     const [h] = o.time.split(':').map(Number);
+                     return h === hourNum;
+                   });
+                   const hasOrders = ordersInHour.length > 0;
+                   
+                   return (
+                     <div key={hourStr} style={{ display: 'flex', minHeight: hasOrders ? 'auto' : '48px', borderBottom: '1px solid var(--line-soft)', transition: 'all 0.3s ease' }}>
+                       <div style={{ width: '60px', padding: '16px 12px 16px 0', borderRight: '2px solid var(--line)', textAlign: 'right', fontSize: '13px', fontWeight: '700', color: hasOrders ? 'var(--text-main)' : 'var(--text-sub)', opacity: hasOrders ? 1 : 0.4 }}>
+                         {hourStr}
+                       </div>
+                       <div style={{ flex: 1, padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-start' }}>
+                         {ordersInHour.sort((a,b) => a.time.localeCompare(b.time)).map(order => {
+                           const isHalfHour = order.time.includes(':30');
+                           const hasOnTheHour = ordersInHour.some(o => !o.time.includes(':30'));
+                           const hasHalfHour = ordersInHour.some(o => o.time.includes(':30'));
+                           const hasBoth = hasOnTheHour && hasHalfHour;
+                           
+                           const sameTimeOrders = ordersInHour.filter(o => o.time === order.time);
+                           const n = sameTimeOrders.length;
+                           return (
+                             <div key={order.id} className={`order-card-wrapper ${isHalfHour ? 'half-hour-card' : ''}`} style={{ 
+                               flexBasis: n > 1 ? `calc(${100 / n}% - 8px)` : '100%', 
+                               flexGrow: 1,
+                               paddingLeft: isHalfHour ? '32px' : '0',
+                               marginTop: isHalfHour ? (hasBoth ? '4px' : '32px') : '4px',
+                               marginBottom: isHalfHour ? '4px' : (hasBoth ? '4px' : '32px'),
+                               transition: 'all 0.3s ease'
+                             }}>
+                               <OrderCard 
+                                 time={order.time} 
+                                 customer={order.customer} 
+                                 items={[order.design]} 
+                                 color={isHalfHour ? '#3B82F6' : 'var(--point)'}
+                                 onClick={() => handleOrderClick(order)} 
+                               />
+                             </div>
+                           );
+                         })}
+                       </div>
+                     </div>
+                   );
+                 })}
+                 {dashboardOrders.length === 0 && <div style={{ textAlign: 'center', padding: '100px', color: 'var(--text-sub)' }}>선택한 날짜에 주문이 없습니다.</div>}
+               </div>
+             );
+           })()
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
               {Array.from(new Set(dashboardOrders.map(o => o.dateOnly))).sort().map(date => {
