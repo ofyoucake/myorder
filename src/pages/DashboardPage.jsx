@@ -458,7 +458,7 @@ const DashboardPage = ({ session, onLogout }) => {
                       </span>
                     </div>
                     <div className="period-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
-                      {dashboardOrders.filter(o => o.dateOnly === date).map(o => <OrderCard key={o.id} time={o.time} customer={o.customer} items={[o.design]} color={o.time.includes(':30') ? '#3B82F6' : 'var(--point)'} onClick={() => handleOrderClick(o)} />)}
+                      {dashboardOrders.filter(o => o.dateOnly === date).sort((a, b) => a.time.localeCompare(b.time)).map(o => <OrderCard key={o.id} time={o.time} customer={o.customer} items={[o.design]} color={o.time.includes(':30') ? '#3B82F6' : 'var(--point)'} onClick={() => handleOrderClick(o)} />)}
                     </div>
                   </div>
                 );
