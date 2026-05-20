@@ -218,13 +218,17 @@ const DashboardPage = ({ session, onLogout }) => {
     return applyFilters(base);
   }, [orders, statsStartDate, statsEndDate, filters]);
 
-  const statsData = useMemo(() => {
+   const statsData = useMemo(() => {
     const totalRevenue = statsOrders.reduce((sum, o) => sum + o.price, 0);
     const designCount = {};
+    const flavorCount = {};
+    const sheetCount = {};
     statsOrders.forEach(o => {
-      designCount[o.design] = (designCount[o.design] || 0) + 1;
+      if (o.design) designCount[o.design] = (designCount[o.design] || 0) + 1;
+      if (o.flavor) flavorCount[o.flavor] = (flavorCount[o.flavor] || 0) + 1;
+      if (o.sheet) sheetCount[o.sheet] = (sheetCount[o.sheet] || 0) + 1;
     });
-    return { totalRevenue, totalCount: statsOrders.length, designCount };
+    return { totalRevenue, totalCount: statsOrders.length, designCount, flavorCount, sheetCount };
   }, [statsOrders]);
 
   const getDaysInMonth = (date) => {
@@ -483,74 +487,112 @@ const DashboardPage = ({ session, onLogout }) => {
     </div>
   );
 
-  const renderStatistics = () => (
-    <div className="flex flex-col gap-md">
-      <div className="card" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', overflow: 'visible' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: '800' }}>기간별 통계 조회</h3>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <div className="mobile-only" style={{ position: 'relative' }}>
-            <div onClick={() => setShowStatsDatePicker(!showStatsDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
-              📅 {statsStartDate && statsEndDate ? `${statsStartDate} - ${statsEndDate}` : '통계 기간 선택'}
-            </div>
-            {showStatsDatePicker && (
-              <>
-                <div 
-                  onClick={() => setShowStatsDatePicker(false)} 
-                  style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    width: '100vw',
-                    height: '100vh',
-                    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-                    zIndex: 1999,
-                    backdropFilter: 'blur(4px)'
-                  }} 
-                />
-                {renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
-                  if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
-                  else {
-                    if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
-                    else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
-                  }
-                })}
-              </>
-            )}
-          </div>
-          <div style={{ position: 'relative' }}>
-            <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
-              🎛️ <span className="desktop-only" style={{ marginLeft: '4px' }}>필터</span>{activeFiltersCount > 0 && <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--point)', marginLeft: '2px' }}>({activeFiltersCount})</span>}
-            </div>
-            {showFilterPicker && renderFilterPopup()}
-          </div>
-        </div>
-      </div>
+  const renderStatistics = () => {
+    const renderRankCard = (title, countMap, color, icon) => {
+      const sortedItems = Object.entries(countMap || {})
+        .filter(([name]) => name && name !== '-')
+        .sort((a, b) => b[1] - a[1]);
 
-      <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-        <div className="card" style={{ padding: '32px' }}>
-          <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 매출</div>
-          <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalRevenue.toLocaleString()}원</div>
+      return (
+        <div className="card" style={{ padding: '32px', borderTop: `4px solid ${color}`, borderRadius: '24px', backgroundColor: 'white', display: 'flex', flexDirection: 'column', transition: 'all 0.3s ease' }}>
+          <h3 style={{ marginBottom: '24px', fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>{icon}</span> {title}
+          </h3>
+          <div className="flex flex-col gap-sm" style={{ flex: 1 }}>
+            {sortedItems.map(([name, count], index) => {
+              const isTop3 = index < 3;
+              const rankColors = ['#F59E0B', '#9CA3AF', '#B45309']; // Gold, Silver, Bronze
+              return (
+                <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line-soft)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ 
+                      fontSize: '12px', 
+                      fontWeight: '800', 
+                      width: '24px', 
+                      height: '24px', 
+                      borderRadius: '50%', 
+                      backgroundColor: isTop3 ? `${rankColors[index]}15` : 'var(--surface-soft)', 
+                      color: isTop3 ? rankColors[index] : 'var(--text-sub)', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center' 
+                    }}>
+                      {index + 1}
+                    </span>
+                    <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '14px' }}>{name}</span>
+                  </div>
+                  <span style={{ fontWeight: '800', color: color, fontSize: '14px' }}>{count}건</span>
+                </div>
+              );
+            })}
+            {sortedItems.length === 0 && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-sub)' }}>조회된 데이터가 없습니다.</div>}
+          </div>
         </div>
-        <div className="card" style={{ padding: '32px' }}>
-          <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 주문수</div>
-          <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalCount}건</div>
-        </div>
-      </div>
+      );
+    };
 
-      <div className="card" style={{ padding: '32px' }}>
-        <h3 style={{ marginBottom: '24px', fontSize: '18px', fontWeight: '800' }}>인기 디자인 순위</h3>
-        <div className="flex flex-col gap-sm">
-          {Object.entries(statsData.designCount).sort((a, b) => b[1] - a[1]).map(([name, count]) => (
-            <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
-              <span style={{ fontWeight: '600' }}>{name}</span>
-              <span style={{ fontWeight: '800', color: 'var(--point)' }}>{count}건</span>
+    return (
+      <div className="flex flex-col gap-md">
+        <div className="card" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', overflow: 'visible' }}>
+          <h3 style={{ fontSize: '16px', fontWeight: '800' }}>기간별 통계 조회</h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <div className="mobile-only" style={{ position: 'relative' }}>
+              <div onClick={() => setShowStatsDatePicker(!showStatsDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
+                📅 {statsStartDate && statsEndDate ? `${statsStartDate} - ${statsEndDate}` : '통계 기간 선택'}
+              </div>
+              {showStatsDatePicker && (
+                <>
+                  <div 
+                    onClick={() => setShowStatsDatePicker(false)} 
+                    style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      width: '100vw',
+                      height: '100vh',
+                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                      zIndex: 1999,
+                      backdropFilter: 'blur(4px)'
+                    }} 
+                  />
+                  {renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
+                    if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
+                    else {
+                      if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
+                      else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
+                    }
+                  })}
+                </>
+              )}
             </div>
-          ))}
-          {statsOrders.length === 0 && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-sub)' }}>조회된 데이터가 없습니다.</div>}
+            <div style={{ position: 'relative' }}>
+              <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
+                🎛️ <span className="desktop-only" style={{ marginLeft: '4px' }}>필터</span>{activeFiltersCount > 0 && <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--point)', marginLeft: '2px' }}>({activeFiltersCount})</span>}
+              </div>
+              {showFilterPicker && renderFilterPopup()}
+            </div>
+          </div>
+        </div>
+
+        <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+          <div className="card" style={{ padding: '32px' }}>
+            <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 매출</div>
+            <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalRevenue.toLocaleString()}원</div>
+          </div>
+          <div className="card" style={{ padding: '32px' }}>
+            <div style={{ color: 'var(--text-sub)', fontSize: '14px', fontWeight: '600' }}>총 주문수</div>
+            <div style={{ fontSize: '28px', fontWeight: '800', marginTop: '8px' }}>{statsData.totalCount}건</div>
+          </div>
+        </div>
+
+        <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+          {renderRankCard('인기 디자인 순위', statsData.designCount, '#F43F5E', '🎨')}
+          {renderRankCard('인기 맛 순위', statsData.flavorCount, '#3B82F6', '🍰')}
+          {renderRankCard('인기 시트 순위', statsData.sheetCount, '#10B981', '🍞')}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderMyPage = () => (
     <div className="card" style={{ padding: '48px', maxWidth: '800px' }}>
