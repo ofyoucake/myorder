@@ -220,11 +220,12 @@ body {
   
   .nav-item {
     margin: 0;
-    padding: 8px 12px;
-    font-size: 13px;
+    padding: 8px 10px;
+    font-size: 11px;
     flex-direction: column;
     gap: 4px;
     border-radius: var(--radius-full);
+    white-space: nowrap;
   }
   
   .sidebar-logout {

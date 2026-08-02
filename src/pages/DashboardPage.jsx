@@ -810,7 +810,7 @@ const DashboardPage = ({ session, onLogout }) => {
         {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'statistics' ? renderStatistics() : renderMyPage()}
 
         {showDetailModal && selectedOrder && (
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, backdropFilter: 'blur(10px)' }}>
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, backdropFilter: 'blur(10px)', padding: '0 0 80px 0' }}>
             <div className="card modal-content" style={{ width: '90%', maxWidth: '700px', padding: '0', borderRadius: '32px', position: 'relative', border: 'none', animation: 'slideUp 0.3s ease-out', overflow: 'hidden', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ padding: '32px', backgroundColor: 'white' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
