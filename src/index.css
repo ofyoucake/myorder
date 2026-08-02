@@ -322,6 +322,22 @@ body {
     font-size: 11px !important;
     gap: 4px !important;
   }
+
+  /* 모바일 인라인 달력: 컴팩트 모드 — 카드에 자연스럽게 통합 */
+  .calendar-inline {
+    width: 100% !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 14px 16px 18px !important;
+  }
+
+  /* 달력 날짜 셀 축소 */
+  .calendar-inline > div:nth-child(2) > div {
+    padding: 5px 0 !important;
+    font-size: 12px !important;
+    border-radius: 8px !important;
+  }
 }
 
 @keyframes spin {

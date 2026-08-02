@@ -31,6 +31,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [copiedType, setCopiedType] = useState(null);
 
   // Database Sync
   const [sheetInfo, setSheetInfo] = useState('');
@@ -139,7 +140,156 @@ const DashboardPage = ({ session, onLogout }) => {
 
   const handleOrderClick = (order) => { 
     setSelectedOrder(order); 
-    setShowDetailModal(true); 
+    setShowDetailModal(true);
+    setCopiedType(null);
+  };
+
+  // ─── 메시지 복사 헬퍼 함수 ───────────────────────────────────────
+
+  // 고객명에서 성(첫 글자) 제거
+  const getFirstName = (customer) => customer ? customer.slice(1) : '';
+
+  // 픽업일시 포맷: "2026.08.06 17:00" → "8월 06일 목요일 17시" (00분이면 분 생략)
+  const formatPickupDateTime = (pickupDateRaw) => {
+    if (!pickupDateRaw) return '';
+    const parts = pickupDateRaw.split(' ');
+    const datePart = parts[0] || '';
+    const timePart = parts[1] || '00:00';
+    const [y, m, d] = datePart.split('.').map(Number);
+    const [h, min] = timePart.split(':').map(Number);
+    if (!y || !m || !d) return pickupDateRaw;
+    const date = new Date(y, m - 1, d);
+    const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+    const dayName = weekdays[date.getDay()];
+    const minPart = min === 0 ? '' : ` ${String(min).padStart(2, '0')}분`;
+    return `${m}월 ${String(d).padStart(2, '0')}일 ${dayName} ${h}시${minPart}`;
+  };
+
+  // 픽업가능시간: ±30분 범위 (00분이면 분 생략)
+  const formatPickupRange = (pickupDateRaw) => {
+    if (!pickupDateRaw) return '';
+    const parts = pickupDateRaw.split(' ');
+    const datePart = parts[0] || '';
+    const timePart = parts[1] || '00:00';
+    const [y, m, d] = datePart.split('.').map(Number);
+    const [h, min] = timePart.split(':').map(Number);
+    if (!y || !m || !d) return '';
+    const totalMinutes = h * 60 + min;
+    const fmt = (totalMin) => {
+      const hh = Math.floor(totalMin / 60);
+      const mm = totalMin % 60;
+      return mm === 0 ? `${hh}시` : `${hh}시 ${String(mm).padStart(2, '0')}분`;
+    };
+    return `${m}월 ${String(d).padStart(2, '0')}일 ${fmt(totalMinutes - 30)} ~ ${fmt(totalMinutes + 30)}`;
+  };
+
+  // 메시지 생성
+  const generateMessage = (type, order) => {
+    const firstName = getFirstName(order.customer);
+    const pickupDateTime = formatPickupDateTime(order.pickupDate);
+    const pickupRange = formatPickupRange(order.pickupDate);
+    const requestsText = [order.requests, order.specialNotes]
+      .filter(v => v && v !== '-')
+      .join(' / ') || '-';
+
+    if (type === 'order') {
+      return ` [OF YOU 케이크 주문서]
+케이크 주문을 원하실 경우, 아래 양식에 맞춰 회신 부탁드립니다 :)
+
+1. 성함/ 연락처: 
+2. 픽업 날짜 / 시간:
+3. 케이크 디자인: 
+4. 원하시는 맛: 
+5. 요청사항: .
+
+답변 확인 후 예약 가능 여부 및 입금 안내를 순차적으로 드리겠습니다.`;
+    }
+
+    if (type === 'reservation') {
+      return `[OF YOU 예약 확정 안내]
+
+안녕하세요, ${firstName}님
+오브유케이크 입니다.
+
+아래와 같이 케이크가 예약 되었습니다.
+
+✔️ 케이크 디자인: ${order.design}
+✔️ 사이즈: ${order.size}
+✔️ 맛: ${order.flavor}
+✔️ 픽업시간: ${pickupDateTime}
+✔️ 요청사항: ${requestsText}
+
+변경 및 취소는 픽업 4일 전까지만 가능합니다.
+문의나 요청이 있으시면 언제든지 편하게 말씀해주세요.
+당신의 하루가 더욱 특별해질 수 있도록, 오브유가 정성껏 준비해드릴게요.
+
+감사합니다. `;
+    }
+
+    if (type === 'pickup') {
+      return `[OF YOU 케이크 픽업 안내]
+
+안녕하세요, ${firstName}님  
+오브유케이크 입니다.
+
+내일은 케이크 픽업날입니다.
+
+✔️ 픽업시간: ${pickupDateTime}
+✔️ 픽업주소: 서울시 강서구 마곡동 771-4 이너매스마곡1 501호 (5층 가장 오른쪽에 위치해있습니다)
+ 
+오브유케이크는 예약 일정에 맞춰 매장 운영시간이 유동적으로 운영됩니다.
+변경사항 있으시면 꼭 연락주세요:) 
+내일 뵙겠습니다! `;
+    }
+
+    if (type === 'unmanned') {
+      return `[오브유 케이크 무인픽업 안내 문자]
+
+안녕하세요, 오브유케이크입니다.
+주문해주신 케이크는 내일 무인 픽업으로 준비되어 있습니다.
+
+아래 링크를 통해 매장 출입이 가능하시며, 
+매장 내 냉장고에서 수령 부탁드립니다.
+
+🔓 출입 링크: 
+📍 매장 주소: 서울시 강서구 마곡동 771-4 이너매스마곡1 501호 
+⏰ 픽업 가능 시간: ${pickupRange} (해당 시간에만 문이 열립니다)
+
+✔️ 케이크 픽업 후 꼭 문이 닫혔는지 확인 부탁드려요. (살짝 앞으로 당겨주셔야 잠깁니다.)
+✔️ 제품 특성상 수령 후 빠른 시간 내 냉장 보관을 권장드립니다.
+✔️ 주차는 30분 무료 회차입니다. 
+✔️ 무더운 날씨로 인해 30분 이상 이동 시에는 보냉백 지참을 권장드립니다. 보냉백 구매를 원하실 경우, 미리 말씀해주시면 함께 준비해드릴게요 😊
+
+문의 사항이 있으실 경우, 언제든지 편하게 연락 주세요.
+감사합니다.`;
+    }
+
+    return '';
+  };
+
+  // 클립보드 복사
+  const handleCopy = async (type, order) => {
+    const text = generateMessage(type, order);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // fallback for http / older browsers
+        const el = document.createElement('textarea');
+        el.value = text;
+        el.style.position = 'fixed';
+        el.style.opacity = '0';
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+      }
+      setCopiedType(type);
+      setTimeout(() => setCopiedType(null), 1500);
+    } catch (err) {
+      alert('복사에 실패했습니다. 직접 선택하여 복사해주세요.');
+    }
   };
 
   // Normalized compare helper
@@ -358,38 +508,7 @@ const DashboardPage = ({ session, onLogout }) => {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <div className="mobile-only" style={{ position: 'relative' }}>
-              <div className="dash-date-btn" onClick={() => setShowDatePicker(!showDatePicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)' }}>
-                📅 {activeTab === 'day' ? selectedDate : (startDate && endDate ? `${startDate} - ${endDate}` : '기간 선택')}
-              </div>
-              {showDatePicker && (
-                <>
-                  <div 
-                    onClick={() => setShowDatePicker(false)} 
-                    style={{
-                      position: 'fixed',
-                      top: 0,
-                      left: 0,
-                      width: '100vw',
-                      height: '100vh',
-                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
-                      zIndex: 1999,
-                      backdropFilter: 'blur(4px)'
-                    }} 
-                  />
-                  {renderCalendar(activeTab, startDate, endDate, (dateStr) => {
-                    if (activeTab === 'day') { setSelectedDate(dateStr); setShowDatePicker(false); }
-                    else {
-                      if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
-                      else {
-                        if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
-                        else { setEndDate(dateStr); setTimeout(() => setShowDatePicker(false), 300); }
-                      }
-                    }
-                  })}
-                </>
-              )}
-            </div>
+            {/* 모바일: 날짜 팝업 버튼 제거 — 달력은 카드 하단에 항상 표시 */}
             <div style={{ position: 'relative' }}>
               <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
                 🎛️ <span className="desktop-only" style={{ marginLeft: '4px' }}>필터</span>{activeFiltersCount > 0 && <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--point)', marginLeft: '2px' }}>({activeFiltersCount})</span>}
@@ -397,6 +516,20 @@ const DashboardPage = ({ session, onLogout }) => {
               {showFilterPicker && renderFilterPopup()}
             </div>
           </div>
+        </div>
+
+        {/* 모바일 전용 인라인 달력 — 항상 표시 */}
+        <div className="mobile-only" style={{ borderTop: '1px solid var(--line)' }}>
+          {renderCalendar(activeTab, startDate, endDate, (dateStr) => {
+            if (activeTab === 'day') { setSelectedDate(dateStr); }
+            else {
+              if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
+              else {
+                if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
+                else { setEndDate(dateStr); }
+              }
+            }
+          }, true)}
         </div>
         
         <div style={{ padding: '24px', minHeight: '400px' }}>
@@ -718,7 +851,42 @@ const DashboardPage = ({ session, onLogout }) => {
                   </div>
                 </div>
 
-                <div style={{ marginTop: '32px', textAlign: 'right' }}>
+                {/* 메시지 복사 버튼 섹션 */}
+                <div style={{ marginTop: '28px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-sub)', marginBottom: '12px' }}>📋 메시지 복사</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                    {[
+                      { type: 'order',       label: '📄 주문서' },
+                      { type: 'reservation', label: '✅ 예약확정' },
+                      { type: 'pickup',      label: '🚗 픽업안내' },
+                      { type: 'unmanned',    label: '🔓 무인픽업안내' },
+                    ].map(({ type, label }) => (
+                      <button
+                        key={type}
+                        onClick={() => handleCopy(type, selectedOrder)}
+                        style={{
+                          padding: '12px 8px',
+                          borderRadius: '12px',
+                          border: `1px solid ${copiedType === type ? '#10B981' : 'var(--line)'}`,
+                          background: copiedType === type ? '#ECFDF5' : 'white',
+                          color: copiedType === type ? '#10B981' : 'var(--text-main)',
+                          fontWeight: '700',
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        {copiedType === type ? '✓ 복사됨!' : label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'right' }}>
                   <Button onClick={() => setShowDetailModal(false)} size="large" style={{ width: '100%' }}>닫기</Button>
                 </div>
               </div>

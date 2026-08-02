@@ -20,7 +20,20 @@ function App() {
       setSession(session);
     });
 
-    return () => subscription.unsubscribe();
+    // iOS Safari 대응: 앱이 백그라운드 → 포그라운드로 돌아올 때 세션 재확인
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          setSession(session);
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   if (loading) {
