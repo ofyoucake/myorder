@@ -5,19 +5,50 @@ import { OrderCard } from '../components/OrderCard';
 import { supabase } from '../supabaseClient';
 import Papa from 'papaparse';
 
+const KST_TIME_ZONE = 'Asia/Seoul';
+
+const getKSTDateKey = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: KST_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}.${values.month}.${values.day}`;
+};
+
+const normalizeDateKey = (dateKey) => {
+  if (!dateKey) return '';
+  const parts = dateKey.replace(/-/g, '.').split('.');
+  if (parts.length !== 3) return dateKey;
+  return parts.map(part => part.padStart(2, '0')).join('.');
+};
+
+const compareDateKeys = (left, right) => {
+  const normalizedLeft = normalizeDateKey(left);
+  const normalizedRight = normalizeDateKey(right);
+  if (normalizedLeft === normalizedRight) return 0;
+  return normalizedLeft < normalizedRight ? -1 : 1;
+};
+
+const getCalendarDateFromKey = (dateKey) => {
+  const [year, month, day] = normalizeDateKey(dateKey).split('.').map(Number);
+  return new Date(year, month - 1, day);
+};
+
 const DashboardPage = ({ session, onLogout }) => {
   // 1. State Management
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [activeTab, setActiveTab] = useState('day');
   
   // Calendar View State
-  const [viewDate, setViewDate] = useState(new Date());
+  const [viewDate, setViewDate] = useState(() => getCalendarDateFromKey(getKSTDateKey()));
   
   // Date Selection for Dashboard
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0].replace(/-/g, '.')); // yyyy.mm.dd
+  const [selectedDate, setSelectedDate] = useState(() => getKSTDateKey()); // yyyy.mm.dd, KST
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
-  const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Date Selection for Statistics
   const [statsStartDate, setStatsStartDate] = useState(null);
@@ -108,7 +139,7 @@ const DashboardPage = ({ session, onLogout }) => {
             const [dPart, tPart] = pickupDateRaw.includes(' ') ? pickupDateRaw.split(' ') : [pickupDateRaw, '00:00'];
             
             // Normalize date string to yyyy.mm.dd (handle 2026.5.8 -> 2026.05.08)
-            const normalizedDate = dPart.split('.').map(p => p.padStart(2, '0')).join('.');
+            const normalizedDate = normalizeDateKey(dPart);
 
             return {
               id: `sheet-${index}`,
@@ -295,10 +326,43 @@ const DashboardPage = ({ session, onLogout }) => {
   // Normalized compare helper
   const isDateInRange = (dateStr, start, end) => {
     if (!dateStr || !start || !end) return false;
-    const d = new Date(dateStr.replace(/\./g, '-'));
-    const s = new Date(start.replace(/\./g, '-'));
-    const e = new Date(end.replace(/\./g, '-'));
-    return d >= s && d <= e;
+    const normalizedDate = normalizeDateKey(dateStr);
+    const normalizedStart = normalizeDateKey(start);
+    const normalizedEnd = normalizeDateKey(end);
+    return normalizedDate >= normalizedStart && normalizedDate <= normalizedEnd;
+  };
+
+  const handleDashboardDateSelect = (dateStr) => {
+    const normalizedDate = normalizeDateKey(dateStr);
+
+    if (activeTab === 'day') {
+      if (compareDateKeys(normalizedDate, selectedDate) === 0) return;
+      const [rangeStart, rangeEnd] = [selectedDate, normalizedDate].sort(compareDateKeys);
+      setStartDate(rangeStart);
+      setEndDate(rangeEnd);
+      setActiveTab('period');
+      return;
+    }
+
+    setSelectedDate(normalizedDate);
+    setStartDate(null);
+    setEndDate(null);
+    setActiveTab('day');
+  };
+
+  const handleStatsDateSelect = (dateStr) => {
+    const normalizedDate = normalizeDateKey(dateStr);
+
+    if (!statsStartDate || statsEndDate) {
+      setStatsStartDate(normalizedDate);
+      setStatsEndDate(null);
+      return;
+    }
+
+    const [rangeStart, rangeEnd] = [statsStartDate, normalizedDate].sort(compareDateKeys);
+    setStatsStartDate(rangeStart);
+    setStatsEndDate(rangeEnd);
+    setTimeout(() => setShowStatsDatePicker(false), 300);
   };
 
   const filterOptions = useMemo(() => {
@@ -351,14 +415,10 @@ const DashboardPage = ({ session, onLogout }) => {
   }, [filters]);
 
   const dashboardOrders = useMemo(() => {
-    const normalizedSelected = selectedDate.split('.').map(p => p.padStart(2, '0')).join('.');
-    let base = [];
-    if (activeTab === 'day') {
-      base = orders.filter(o => o.dateOnly === normalizedSelected);
-    } else {
-      if (!startDate || !endDate) return [];
-      base = orders.filter(o => isDateInRange(o.dateOnly, startDate, endDate));
-    }
+    const normalizedSelected = normalizeDateKey(selectedDate);
+    const base = activeTab === 'day'
+      ? orders.filter(o => o.dateOnly === normalizedSelected)
+      : (!startDate || !endDate ? [] : orders.filter(o => isDateInRange(o.dateOnly, startDate, endDate)));
     return applyFilters(base);
   }, [orders, activeTab, selectedDate, startDate, endDate, filters]);
 
@@ -442,13 +502,7 @@ const DashboardPage = ({ session, onLogout }) => {
     const days = getDaysInMonth(viewDate);
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth() + 1;
-    
-    const getTodayKST = () => {
-      const now = new Date();
-      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      return new Date(utc + (9 * 3600000));
-    };
-    const today = getTodayKST();
+    const todayKey = getKSTDateKey();
 
     const wrapperStyle = inline 
       ? { width: '320px', backgroundColor: 'white', borderRadius: '24px', padding: '24px', border: '1px solid var(--line)', boxShadow: 'var(--shadow-elevation)' }
@@ -467,8 +521,8 @@ const DashboardPage = ({ session, onLogout }) => {
             if (!date) return <div key={`empty-${i}`} />;
             const dateStr = formatDate(date);
             const isSelected = type === 'day' ? selectedDate === dateStr : (dateStr === currentStart || dateStr === currentEnd);
-            const isInRange = type !== 'day' && currentStart && currentEnd && new Date(dateStr.replace(/\./g,'-')) > new Date(currentStart.replace(/\./g,'-')) && new Date(dateStr.replace(/\./g,'-')) < new Date(currentEnd.replace(/\./g,'-'));
-            const isToday = date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
+            const isInRange = type !== 'day' && currentStart && currentEnd && compareDateKeys(dateStr, currentStart) > 0 && compareDateKeys(dateStr, currentEnd) < 0;
+            const isToday = dateStr === todayKey;
             
             return (
               <div key={dateStr} onClick={() => onSelect(dateStr)}
@@ -487,21 +541,11 @@ const DashboardPage = ({ session, onLogout }) => {
       <div className="card" style={{ padding: '0', overflow: 'visible', zIndex: 100 }}>
         <div className="dash-header-bar" style={{ padding: '16px 24px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div className="flex gap-sm" style={{ backgroundColor: 'var(--surface-soft)', padding: '4px', borderRadius: 'var(--radius-full)' }}>
-              {['day', 'period'].map(tab => (
-                <div key={tab} onClick={() => {
-                  if (activeTab !== tab) {
-                    setActiveTab(tab); 
-                    setStartDate(null); 
-                    setEndDate(null); 
-                    resetFilters();
-                  }
-                }}
-                  className="dash-tab"
-                  style={{ padding: '10px 24px', borderRadius: 'var(--radius-full)', cursor: 'pointer', backgroundColor: activeTab === tab ? 'white' : 'transparent', color: activeTab === tab ? 'var(--text-main)' : 'var(--text-sub)', fontWeight: '600', fontSize: '14px', boxShadow: activeTab === tab ? 'var(--shadow-elevation)' : 'none' }}>
-                  {tab === 'day' ? '하루' : '기간'}
-                </div>
-              ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', backgroundColor: 'var(--surface-soft)', borderRadius: 'var(--radius-full)', fontSize: '14px', fontWeight: '700' }}>
+              <span style={{ color: 'var(--point)' }}>{activeTab === 'day' ? '하루 선택' : '기간 선택'}</span>
+              <span style={{ color: 'var(--text-sub)' }}>
+                {activeTab === 'day' ? selectedDate : `${startDate} - ${endDate}`}
+              </span>
             </div>
             <div className="dash-order-badge" style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
               {dashboardOrders.length} 주문
@@ -520,16 +564,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
         {/* 모바일 전용 인라인 달력 — 항상 표시 */}
         <div className="mobile-only" style={{ borderTop: '1px solid var(--line)' }}>
-          {renderCalendar(activeTab, startDate, endDate, (dateStr) => {
-            if (activeTab === 'day') { setSelectedDate(dateStr); }
-            else {
-              if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
-              else {
-                if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
-                else { setEndDate(dateStr); }
-              }
-            }
-          }, true)}
+          {renderCalendar(activeTab, startDate, endDate, handleDashboardDateSelect, true)}
         </div>
         
         <div style={{ padding: '24px', minHeight: '400px' }}>
@@ -688,13 +723,7 @@ const DashboardPage = ({ session, onLogout }) => {
                       backdropFilter: 'blur(4px)'
                     }} 
                   />
-                  {renderCalendar('period', statsStartDate, statsEndDate, (dateStr) => {
-                    if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
-                    else {
-                      if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
-                      else { setStatsEndDate(dateStr); setTimeout(() => setShowStatsDatePicker(false), 300); }
-                    }
-                  })}
+                  {renderCalendar('period', statsStartDate, statsEndDate, handleStatsDateSelect)}
                 </>
               )}
             </div>
@@ -769,29 +798,10 @@ const DashboardPage = ({ session, onLogout }) => {
 
               <div className="desktop-only" style={{ flex: 1, display: 'flex', justifyContent: 'center', margin: '0 24px' }}>
                 {activeMenu === 'dashboard' && renderCalendar(
-                  activeTab, startDate, endDate,
-                  (dateStr) => {
-                    if (activeTab === 'day') { setSelectedDate(dateStr); }
-                    else {
-                      if (!startDate || (startDate && endDate)) { setStartDate(dateStr); setEndDate(null); }
-                      else {
-                        if (new Date(dateStr.replace(/\./g,'-')) < new Date(startDate.replace(/\./g,'-'))) setStartDate(dateStr);
-                        else { setEndDate(dateStr); }
-                      }
-                    }
-                  },
-                  true
+                  activeTab, startDate, endDate, handleDashboardDateSelect, true
                 )}
                 {activeMenu === 'statistics' && renderCalendar(
-                  'period', statsStartDate, statsEndDate,
-                  (dateStr) => {
-                    if (!statsStartDate || (statsStartDate && statsEndDate)) { setStatsStartDate(dateStr); setStatsEndDate(null); }
-                    else {
-                      if (new Date(dateStr.replace(/\./g,'-')) < new Date(statsStartDate.replace(/\./g,'-'))) setStatsStartDate(dateStr);
-                      else { setStatsEndDate(dateStr); }
-                    }
-                  },
-                  true
+                  'period', statsStartDate, statsEndDate, handleStatsDateSelect, true
                 )}
               </div>
 
