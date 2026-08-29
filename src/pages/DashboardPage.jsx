@@ -274,7 +274,7 @@ const DashboardPage = ({ session, onLogout }) => {
     }
 
     if (type === 'unmanned') {
-      return `[오브유 케이크 무인픽업 안내 문자]
+      return `[오브유 케이크 무인픽업 안내]
 
 안녕하세요, 오브유케이크입니다.
 주문해주신 케이크는 내일 무인 픽업으로 준비되어 있습니다.
