@@ -4,6 +4,7 @@ import { Input } from '../components/Input';
 import { OrderCard } from '../components/OrderCard';
 import { supabase } from '../supabaseClient';
 import Papa from 'papaparse';
+import { ORDER_TEXT_FIELDS, preserveOrderText, groupOrderText, matchesOrderFilters } from '../orderText';
 
 const KST_TIME_ZONE = 'Asia/Seoul';
 
@@ -144,15 +145,15 @@ const DashboardPage = ({ session, onLogout }) => {
             return {
               id: `sheet-${index}`,
               customer: row[0] || '미지명', // A
-              design: (row[1] || '-').replace(/\s+/g, ''), // B
+              design: preserveOrderText(row[1]), // B
               orderDate: row[2] || '-', // C
               pickupDate: pickupDateRaw, // D
               time: tPart || '00:00',
               dateOnly: normalizedDate,
-              flavor: (row[4] || '-').replace(/\s+/g, ''), // E
-              sheet: (row[5] || '-').replace(/\s+/g, ''), // F
-              size: (row[6] || '-').replace(/\s+/g, ''), // G
-              cream: (row[7] || '-').replace(/\s+/g, ''), // H
+              flavor: preserveOrderText(row[4]), // E
+              sheet: preserveOrderText(row[5]), // F
+              size: preserveOrderText(row[6]), // G
+              cream: preserveOrderText(row[7]), // H
               requests: row[8] || '-', // I
               specialNotes: row[9] || '-', // J
               orderPath: row[10] || '-', // K
@@ -366,21 +367,9 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const filterOptions = useMemo(() => {
-    const opts = { design: new Set(), sheet: new Set(), cream: new Set(), flavor: new Set(), size: new Set() };
-    orders.forEach(o => {
-      if (o.design && o.design !== '-') opts.design.add(o.design);
-      if (o.sheet && o.sheet !== '-') opts.sheet.add(o.sheet);
-      if (o.cream && o.cream !== '-') opts.cream.add(o.cream);
-      if (o.flavor && o.flavor !== '-') opts.flavor.add(o.flavor);
-      if (o.size && o.size !== '-') opts.size.add(o.size);
-    });
-    return { 
-      design: [...opts.design].sort(), 
-      sheet: [...opts.sheet].sort(), 
-      cream: [...opts.cream].sort(), 
-      flavor: [...opts.flavor].sort(), 
-      size: [...opts.size].sort() 
-    };
+    return Object.fromEntries(ORDER_TEXT_FIELDS.map(field => [
+      field, groupOrderText(orders, field).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+    ]));
   }, [orders]);
 
   const toggleFilter = (type, value) => {
@@ -400,14 +389,7 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const applyFilters = (list) => {
-    return list.filter(o => {
-      if (filters.design?.length > 0 && !filters.design.includes(o.design)) return false;
-      if (filters.sheet?.length > 0 && !filters.sheet.includes(o.sheet)) return false;
-      if (filters.cream?.length > 0 && !filters.cream.includes(o.cream)) return false;
-      if (filters.flavor?.length > 0 && !filters.flavor.includes(o.flavor)) return false;
-      if (filters.size?.length > 0 && !filters.size.includes(o.size)) return false;
-      return true;
-    });
+    return list.filter(o => matchesOrderFilters(o, filters));
   };
 
   const activeFiltersCount = useMemo(() => {
@@ -430,14 +412,9 @@ const DashboardPage = ({ session, onLogout }) => {
 
    const statsData = useMemo(() => {
     const totalRevenue = statsOrders.reduce((sum, o) => sum + o.price, 0);
-    const designCount = {};
-    const flavorCount = {};
-    const sheetCount = {};
-    statsOrders.forEach(o => {
-      if (o.design) designCount[o.design] = (designCount[o.design] || 0) + 1;
-      if (o.flavor) flavorCount[o.flavor] = (flavorCount[o.flavor] || 0) + 1;
-      if (o.sheet) sheetCount[o.sheet] = (sheetCount[o.sheet] || 0) + 1;
-    });
+    const designCount = groupOrderText(statsOrders, 'design');
+    const flavorCount = groupOrderText(statsOrders, 'flavor');
+    const sheetCount = groupOrderText(statsOrders, 'sheet');
     return { totalRevenue, totalCount: statsOrders.length, designCount, flavorCount, sheetCount };
   }, [statsOrders]);
 
@@ -485,9 +462,9 @@ const DashboardPage = ({ session, onLogout }) => {
              </div>
              {expandedFilters[type] && (
                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
-                 {filterOptions[type]?.length > 0 ? filterOptions[type].map(val => (
+                 {filterOptions[type]?.length > 0 ? filterOptions[type].map(({ key: val, label }) => (
                    <div key={val} onClick={() => toggleFilter(type, val)} style={{ padding: '6px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', backgroundColor: filters[type]?.includes(val) ? 'var(--point)' : 'var(--surface-soft)', color: filters[type]?.includes(val) ? 'white' : 'var(--text-sub)' }}>
-                     {val}
+                     {label}
                    </div>
                  )) : <div style={{ fontSize: '12px', color: 'var(--text-sub)' }}>옵션 없음</div>}
                </div>
@@ -657,9 +634,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
   const renderStatistics = () => {
     const renderRankCard = (title, countMap, color, icon) => {
-      const sortedItems = Object.entries(countMap || {})
-        .filter(([name]) => name && name !== '-')
-        .sort((a, b) => b[1] - a[1]);
+      const sortedItems = [...(countMap || [])].sort((a, b) => b.count - a.count);
 
       return (
         <div className="card" style={{ padding: '32px', borderTop: `4px solid ${color}`, borderRadius: '24px', backgroundColor: 'white', display: 'flex', flexDirection: 'column', transition: 'all 0.3s ease' }}>
@@ -667,11 +642,11 @@ const DashboardPage = ({ session, onLogout }) => {
             <span>{icon}</span> {title}
           </h3>
           <div className="flex flex-col gap-sm" style={{ flex: 1 }}>
-            {sortedItems.map(([name, count], index) => {
+            {sortedItems.map(({ key, label: name, count }, index) => {
               const isTop3 = index < 3;
               const rankColors = ['#F59E0B', '#9CA3AF', '#B45309']; // Gold, Silver, Bronze
               return (
-                <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line-soft)' }}>
+                <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line-soft)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <span style={{ 
                       fontSize: '12px', 
@@ -844,7 +819,7 @@ const DashboardPage = ({ session, onLogout }) => {
                   {/* Cake Info Card */}
                   <div style={{ padding: '24px', borderRadius: '20px', border: '1px solid #FFE4E6', backgroundColor: '#FFF9F9' }}>
                     <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#E11D48', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>🎂 케이크 정보</h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '20px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                       <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>디자인</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.design}</div></div>
                       <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>맛 선택</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.flavor}</div></div>
                       <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>시트</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.sheet}</div></div>
@@ -854,7 +829,7 @@ const DashboardPage = ({ session, onLogout }) => {
                     </div>
                     <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px dashed #FDA4AF' }}>
                       <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>요청/특이사항</label>
-                      <div style={{ fontSize: '14px', fontWeight: '500', marginTop: '8px', lineHeight: '1.6' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '500', marginTop: '8px', lineHeight: '1.6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                         {selectedOrder.requests} / {selectedOrder.specialNotes}
                       </div>
                     </div>
