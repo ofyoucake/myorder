@@ -189,6 +189,70 @@ body {
 .h1 { font-size: 28px; font-weight: 700; line-height: 1.4; color: var(--text-main); }
 .h2 { font-size: 22px; font-weight: 500; color: var(--text-main); }
 
+/* Dashboard date summary and its contextual reset action */
+.dash-header-info {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dash-date-summary {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dash-date-summary-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-today-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 60px;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 56, 92, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--point-dark);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(34, 34, 34, 0.06);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.calendar-today-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.calendar-today-btn:hover {
+  background: #FFFFFF;
+  border-color: var(--point);
+  color: var(--point-dark);
+  box-shadow: 0 4px 10px rgba(255, 56, 92, 0.14);
+  transform: translateY(-1px);
+}
+
+.calendar-today-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.calendar-today-btn:focus-visible {
+  outline: 2px solid var(--point);
+  outline-offset: 2px;
+}
+
 /* 📱 Mobile Responsive (max-width: 768px) */
 @media (max-width: 768px) {
   .sidebar {
@@ -304,6 +368,32 @@ body {
   /* Dashboard header: shrink padding and fonts to fit mobile screen */
   .dash-header-bar {
     padding: 10px 12px !important;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .dash-header-info {
+    gap: 8px !important;
+    flex: 1 1 auto;
+  }
+  .dash-date-summary {
+    gap: 6px !important;
+    padding-left: 12px !important;
+  }
+  .dash-date-summary > span:first-child {
+    font-size: 12px;
+  }
+  .dash-date-summary-value {
+    font-size: 12px;
+  }
+  .calendar-today-btn {
+    min-width: 52px;
+    height: 32px;
+    padding: 0 9px;
+    font-size: 11px;
+  }
+  .calendar-today-btn svg {
+    width: 13px;
+    height: 13px;
   }
   .dash-tab {
     padding: 5px 10px !important;

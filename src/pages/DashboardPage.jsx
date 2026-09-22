@@ -485,7 +485,7 @@ const DashboardPage = ({ session, onLogout }) => {
     );
   };
 
-  const renderCalendar = (type, currentStart, currentEnd, onSelect, inline = false, onToday = null) => {
+  const renderCalendar = (type, currentStart, currentEnd, onSelect, inline = false) => {
     const days = getDaysInMonth(viewDate);
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth() + 1;
@@ -500,12 +500,7 @@ const DashboardPage = ({ session, onLogout }) => {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginBottom: '20px' }}>
           <button type="button" aria-label="이전 달" onClick={() => setViewDate(new Date(year, month - 2, 1))} style={{ justifySelf: 'start', width: '32px', height: '40px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&lt;</button>
           <div style={{ fontWeight: '900', fontSize: '16px', whiteSpace: 'nowrap', textAlign: 'center' }}>{year}년 {month}월</div>
-          <div style={{ justifySelf: 'end', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            {onToday && (
-              <button type="button" aria-label="오늘 날짜로 이동" title="오늘 날짜로 이동" onClick={onToday} style={{ minWidth: '54px', minHeight: '40px', padding: '0 10px', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--surface-soft)', color: 'var(--text-sub)', cursor: 'pointer', fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>오늘</button>
-            )}
-            <button type="button" aria-label="다음 달" onClick={() => setViewDate(new Date(year, month, 1))} style={{ width: '32px', height: '40px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&gt;</button>
-          </div>
+          <button type="button" aria-label="다음 달" onClick={() => setViewDate(new Date(year, month, 1))} style={{ justifySelf: 'end', width: '32px', height: '40px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&gt;</button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px' }}>
           {['일','월','화','수','목','금','토'].map((d, i) => <div key={d} style={{ fontSize: '12px', fontWeight: '700', color: i === 0 ? 'var(--error)' : 'var(--text-sub)', opacity: 0.5 }}>{d}</div>)}
@@ -532,18 +527,26 @@ const DashboardPage = ({ session, onLogout }) => {
     <div className="flex flex-col gap-md" style={{ position: 'relative' }}>
       <div className="card" style={{ padding: '0', overflow: 'visible', zIndex: 100 }}>
         <div className="dash-header-bar" style={{ padding: '16px 24px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', backgroundColor: 'var(--surface-soft)', borderRadius: 'var(--radius-full)', fontSize: '14px', fontWeight: '700' }}>
+          <div className="dash-header-info" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div className="dash-date-summary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 4px 4px 16px', backgroundColor: 'var(--surface-soft)', borderRadius: 'var(--radius-full)', fontSize: '14px', fontWeight: '700' }}>
               <span style={{ color: 'var(--point)' }}>{activeTab === 'day' ? '하루 선택' : '기간 선택'}</span>
-              <span style={{ color: 'var(--text-sub)' }}>
+              <span className="dash-date-summary-value" style={{ color: 'var(--text-sub)' }}>
                 {activeTab === 'day' ? selectedDate : `${startDate} - ${endDate}`}
               </span>
+              <button className="calendar-today-btn" type="button" aria-label="오늘 날짜와 일별 보기로 이동" title="오늘 날짜와 일별 보기로 이동" onClick={handleDashboardToday}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4.5" width="18" height="16" rx="2" />
+                  <path d="M16 2.5v4M8 2.5v4M3 9.5h18" />
+                  <path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01" />
+                </svg>
+                <span>오늘</span>
+              </button>
             </div>
             <div className="dash-order-badge" style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', backgroundColor: 'var(--point-light)', padding: '6px 12px', borderRadius: 'var(--radius-full)' }}>
               {dashboardOrders.length} 주문
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="dash-header-actions" style={{ display: 'flex', gap: '8px' }}>
             {/* 모바일: 날짜 팝업 버튼 제거 — 달력은 카드 하단에 항상 표시 */}
             <div style={{ position: 'relative' }}>
               <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
@@ -556,7 +559,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
         {/* 모바일 전용 인라인 달력 — 항상 표시 */}
         <div className="mobile-only" style={{ borderTop: '1px solid var(--line)' }}>
-          {renderCalendar(activeTab, startDate, endDate, handleDashboardDateSelect, true, handleDashboardToday)}
+          {renderCalendar(activeTab, startDate, endDate, handleDashboardDateSelect, true)}
         </div>
         
         <div style={{ padding: '24px', minHeight: '400px' }}>
@@ -788,7 +791,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
               <div className="desktop-only" style={{ flex: 1, display: 'flex', justifyContent: 'center', margin: '0 24px' }}>
                 {activeMenu === 'dashboard' && renderCalendar(
-                  activeTab, startDate, endDate, handleDashboardDateSelect, true, handleDashboardToday
+                  activeTab, startDate, endDate, handleDashboardDateSelect, true
                 )}
                 {activeMenu === 'statistics' && renderCalendar(
                   'period', statsStartDate, statsEndDate, handleStatsDateSelect, true
