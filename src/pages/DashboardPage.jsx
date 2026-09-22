@@ -351,6 +351,16 @@ const DashboardPage = ({ session, onLogout }) => {
     setActiveTab('day');
   };
 
+  const handleDashboardToday = () => {
+    const todayKey = getKSTDateKey();
+
+    setViewDate(getCalendarDateFromKey(todayKey));
+    setSelectedDate(todayKey);
+    setStartDate(null);
+    setEndDate(null);
+    setActiveTab('day');
+  };
+
   const handleStatsDateSelect = (dateStr) => {
     const normalizedDate = normalizeDateKey(dateStr);
 
@@ -475,7 +485,7 @@ const DashboardPage = ({ session, onLogout }) => {
     );
   };
 
-  const renderCalendar = (type, currentStart, currentEnd, onSelect, inline = false) => {
+  const renderCalendar = (type, currentStart, currentEnd, onSelect, inline = false, onToday = null) => {
     const days = getDaysInMonth(viewDate);
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth() + 1;
@@ -487,10 +497,15 @@ const DashboardPage = ({ session, onLogout }) => {
 
     return (
       <div className={inline ? "calendar-inline" : "calendar-popup"} style={wrapperStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <button onClick={() => setViewDate(new Date(year, month - 2, 1))} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&lt;</button>
-          <div style={{ fontWeight: '900', fontSize: '16px', whiteSpace: 'nowrap' }}>{year}년 {month}월</div>
-          <button onClick={() => setViewDate(new Date(year, month, 1))} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&gt;</button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginBottom: '20px' }}>
+          <button type="button" aria-label="이전 달" onClick={() => setViewDate(new Date(year, month - 2, 1))} style={{ justifySelf: 'start', width: '32px', height: '40px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&lt;</button>
+          <div style={{ fontWeight: '900', fontSize: '16px', whiteSpace: 'nowrap', textAlign: 'center' }}>{year}년 {month}월</div>
+          <div style={{ justifySelf: 'end', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {onToday && (
+              <button type="button" aria-label="오늘 날짜로 이동" title="오늘 날짜로 이동" onClick={onToday} style={{ minWidth: '54px', minHeight: '40px', padding: '0 10px', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--surface-soft)', color: 'var(--text-sub)', cursor: 'pointer', fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>오늘</button>
+            )}
+            <button type="button" aria-label="다음 달" onClick={() => setViewDate(new Date(year, month, 1))} style={{ width: '32px', height: '40px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>&gt;</button>
+          </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px' }}>
           {['일','월','화','수','목','금','토'].map((d, i) => <div key={d} style={{ fontSize: '12px', fontWeight: '700', color: i === 0 ? 'var(--error)' : 'var(--text-sub)', opacity: 0.5 }}>{d}</div>)}
@@ -541,7 +556,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
         {/* 모바일 전용 인라인 달력 — 항상 표시 */}
         <div className="mobile-only" style={{ borderTop: '1px solid var(--line)' }}>
-          {renderCalendar(activeTab, startDate, endDate, handleDashboardDateSelect, true)}
+          {renderCalendar(activeTab, startDate, endDate, handleDashboardDateSelect, true, handleDashboardToday)}
         </div>
         
         <div style={{ padding: '24px', minHeight: '400px' }}>
@@ -773,7 +788,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
               <div className="desktop-only" style={{ flex: 1, display: 'flex', justifyContent: 'center', margin: '0 24px' }}>
                 {activeMenu === 'dashboard' && renderCalendar(
-                  activeTab, startDate, endDate, handleDashboardDateSelect, true
+                  activeTab, startDate, endDate, handleDashboardDateSelect, true, handleDashboardToday
                 )}
                 {activeMenu === 'statistics' && renderCalendar(
                   'period', statsStartDate, statsEndDate, handleStatsDateSelect, true
