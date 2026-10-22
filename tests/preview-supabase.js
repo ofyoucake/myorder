@@ -7,7 +7,7 @@ export const supabase = {
     signOut: async () => ({}),
   },
   from: () => ({
-    select: () => ({ eq: () => ({ single: async () => ({ data: { sheet_url: '' } }) }) }),
+    select: () => ({ eq: () => ({ single: async () => ({ data: { sheet_url: 'local-preview-source' } }) }) }),
     upsert: async () => ({ error: { message: '미리보기에서는 계정 설정을 저장하지 않습니다.' } }),
   }),
 };

@@ -7,6 +7,36 @@ const stored = { ...input, id: 'ord_2ef261cb-b840-47ae-b522-5ebf50fa5819', revis
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const idsReady = (orderCount = 0) => json({ assignedCount: 0, orderCount, unchangedOtherColumns: true });
 
+test('overlapping list loads share one ID sync and refresh again after completion', async () => {
+  const requests = [];
+  const client = createOrdersClient({
+    getAccessToken: async () => 'session-test-token',
+    fetchImpl: async (url, options) => {
+      requests.push([options.method, url]);
+      return options.method === 'POST' ? idsReady(1) : json({ orders: [stored] });
+    },
+  });
+
+  assert.deepEqual(await Promise.all([client.list(), client.list()]), [[stored], [stored]]);
+  assert.deepEqual(requests, [['POST', '/api/orders/ids'], ['GET', '/api/orders'], ['GET', '/api/orders']]);
+  await client.list();
+  assert.equal(requests.length, 5, 'completed results must not be cached');
+});
+
+test('failed list loads release their in-flight request so retry can succeed', async () => {
+  let available = false;
+  const client = createOrdersClient({
+    getAccessToken: async () => 'session-test-token',
+    fetchImpl: async (_url, options) => {
+      if (!available) return json({ error: { code: 'CONFLICT' } }, 409);
+      return options.method === 'POST' ? idsReady(1) : json({ orders: [stored] });
+    },
+  });
+  await assert.rejects(client.list(), error => error.code === 'CONFLICT');
+  available = true;
+  assert.deepEqual(await client.list(), [stored]);
+});
+
 test('an expired session cannot issue an order request', async () => {
   let requested = false;
   const client = createOrdersClient({ getAccessToken: async () => null, fetchImpl: async () => { requested = true; } });

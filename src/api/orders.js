@@ -123,9 +123,18 @@ export function createOrdersClient({
     return result;
   };
 
+  // Share only an active ID sync, never cache order reads or completed results.
+  let pendingIdSync;
+  const synchronizeIds = () => {
+    if (!pendingIdSync) {
+      pendingIdSync = ensureIds().finally(() => { pendingIdSync = undefined; });
+    }
+    return pendingIdSync;
+  };
+
   return {
     async list() {
-      await ensureIds();
+      await synchronizeIds();
       const result = await request();
       if (!Array.isArray(result?.orders)) throw new OrderApiError('INVALID_RESPONSE');
       return result.orders.map(validateOrder);

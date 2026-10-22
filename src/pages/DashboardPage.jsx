@@ -222,7 +222,8 @@ const DashboardPage = ({ session, onLogout }) => {
     }
   }, []);
 
-  useEffect(() => { loadSheetData(sheetInfo); }, [sheetInfo, loadSheetData]);
+  const sheetDataSource = ORDER_API_ENABLED ? null : sheetInfo;
+  useEffect(() => { loadSheetData(sheetDataSource); }, [sheetDataSource, loadSheetData]);
 
   const handleOrderClick = (order) => { 
     setSelectedOrder(order); 

@@ -51,9 +51,9 @@ then enable production UI. Never test create/update/delete on a real reservation
 Rollback disables frontend/backend flags or restores the previous successful Pages
 deployment. Keep assigned L IDs; reverting a deploy does not require clearing them.
 
-## Verification completed before production activation (2026-10-22 KST)
+## Verification and production activation (2026-10-22 KST)
 
-- 75 Node tests passed; focused changed-file ESLint and production build passed.
+- 77 Node tests passed; focused changed-file ESLint and production build passed.
 - A separate temporary headless Chrome profile verified form layout at 320, 768,
   1024 and 1440 pixels, focus containment, and the actual delete-confirmation flow.
   Run `node tests/preview-server.mjs`, then `node tests/responsive-qc.mjs` locally.
@@ -66,8 +66,15 @@ deployment. Keep assigned L IDs; reverting a deploy does not require clearing th
 - The isolated document has no remaining test orders or lock. Production readiness
   passed for 1,168 existing orders. The temporary test flag is removed for rollout.
 
-Production ID backfill and post-activation integrity checks are still required;
-the above is not a claim that migration has already happened.
+- Production flags are now enabled. L1 is `ID`; all 1,168 existing reservations
+  received an immutable UUID. Missing and duplicate IDs are both zero.
+- The protected A:K/M:W value-and-formula fingerprint matched exactly before and
+  after ID backfill. Existing reservation contents and price formulas were untouched.
+- Initial activation exposed overlapping profile/order loads. The dashboard now
+  ignores profile sheet-URL changes in protected-API mode, and overlapping loads
+  share only the active ID synchronization, never cached order results. Unit and
+  real-browser regression tests reproduce the old duplicate sync and pass with
+  the fix, including retry after an unsuccessful load.
 
 Validation: `node --test tests/*.test.js`, focused ESLint, production build, actual
 Google API checks and browser QC. Repository-wide ESLint has pre-existing failures

@@ -21,9 +21,13 @@ await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror
 let nextId = 0;
 const pending = new Map();
 const errors = [];
+let initialIdRequests = 0;
+let listResponseReceived = false;
 socket.onmessage = event => {
   const message = JSON.parse(event.data);
   if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.text);
+  if (message.method === 'Network.requestWillBeSent' && message.params.request.url.endsWith('/api/order-tests/ids')) initialIdRequests++;
+  if (message.method === 'Network.responseReceived' && message.params.response.url.endsWith('/api/order-tests')) listResponseReceived = true;
   const operation = pending.get(message.id);
   if (operation) { pending.delete(message.id); clearTimeout(operation.timeout); message.error ? operation.reject(new Error(message.error.message)) : operation.resolve(message.result); }
 };
@@ -52,10 +56,16 @@ async function until(expression) {
 try {
   await send('Page.enable', {}, sessionId);
   await send('Runtime.enable', {}, sessionId);
+  await send('Network.enable', {}, sessionId);
   for (const width of [320, 768, 1024, 1440]) {
+    initialIdRequests = 0;
+    listResponseReceived = false;
     await send('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false }, sessionId);
     await send('Page.navigate', { url: 'http://127.0.0.1:4173/order-test' }, sessionId);
     await until(`Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === '주문 등록')`);
+    for (let wait = 0; wait < 50 && !listResponseReceived; wait++) await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(initialIdRequests, 1, 'loading a profile must not start a second ID synchronization');
     await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '주문 등록').click()`);
     await until(`Boolean(document.querySelector('[role="dialog"]'))`);
     const layout = await evaluate(`(() => {const d=document.querySelector('[role="dialog"]'),r=d.getBoundingClientRect();return {width:innerWidth,scrollWidth:document.documentElement.scrollWidth,left:r.left,right:r.right,inputs:[...d.querySelectorAll('input,textarea')].map(i=>{const x=i.getBoundingClientRect();return {id:i.id,left:x.left,right:x.right}})}})()`);
@@ -70,8 +80,9 @@ try {
     console.log(JSON.stringify({ width, horizontalOverflow: false, focusInDialog: true }));
   }
   // The delete confirmation must not forward a click event as the retry request ID.
-  await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '취소').click()`);
-  await evaluate(`document.querySelector('.order-card-wrapper .card').click()`);
+  await evaluate(`document.getElementById('order-customer').focus()`);
+  await send('Input.insertText', { text: '[테스트 전용·제작 금지] 브라우저 자동 QC' }, sessionId);
+  await evaluate(`Array.from(document.querySelectorAll('form button')).find(b => b.textContent.trim() === '주문 등록').click()`);
   await until(`Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='삭제')`);
   await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '삭제').click()`);
   await until(`Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='주문 삭제')`);
