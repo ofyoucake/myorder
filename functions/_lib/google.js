@@ -7,7 +7,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_RANGE_ROW = 20_000;
 const MAX_RANGE_COLUMN = 23; // W: production read boundary is A1:W1996; client growth ceiling is 20,000 rows.
-const ALLOWED_QUOTED_SHEET_NAMES = new Set(['주문정보', '테스트_제작금지']);
+const ALLOWED_QUOTED_SHEET_NAMES = new Set(['주문정보', '테스트_제작금지', '시스템_저장기록']);
 const MAX_FIELDS_LENGTH = 512;
 const MAX_BATCH_REQUESTS = 100;
 const defaultFetch = (...args) => globalThis.fetch(...args);
@@ -109,6 +109,11 @@ const validateFields = (fields) => {
     fail('FIELDS_NOT_ALLOWED', 400);
   }
   return fields;
+};
+
+const validateRanges = ranges => {
+  if (!Array.isArray(ranges) || ranges.length === 0 || ranges.length > 8) fail('RANGE_NOT_ALLOWED', 400);
+  return ranges.map(validateRange);
 };
 
 const toBase64Url = (bytes) => {
@@ -345,10 +350,11 @@ export function createGoogleSheetsClient({
   const baseUrlFor = (spreadsheetId) => `${SHEETS_ENDPOINT}/${encodeURIComponent(validateSpreadsheetId(spreadsheetId, allowedIds))}`;
 
   return {
-    async getSpreadsheet(spreadsheetId, fields) {
+    async getSpreadsheet(spreadsheetId, fields, { ranges } = {}) {
       const params = new URLSearchParams();
       const safeFields = validateFields(fields);
       if (safeFields !== undefined) params.set('fields', safeFields);
+      if (ranges !== undefined) validateRanges(ranges).forEach(range => params.append('ranges', range));
       const query = params.toString();
       return requestJson(`${baseUrlFor(spreadsheetId)}${query ? `?${query}` : ''}`, { method: 'GET' });
     },
@@ -362,16 +368,21 @@ export function createGoogleSheetsClient({
       return requestJson(url, { method: 'GET' });
     },
 
-    async batchUpdate(spreadsheetId, requests) {
+    async batchUpdate(spreadsheetId, requests, { responseRanges, fields } = {}) {
       if (readOnly) fail('READ_ONLY', 403);
       validateSpreadsheetId(spreadsheetId, allowedIds);
       if (!Array.isArray(requests) || requests.length === 0 || requests.length > MAX_BATCH_REQUESTS) {
         fail('REQUESTS_INVALID', 400);
       }
-      return requestJson(`${baseUrlFor(spreadsheetId)}:batchUpdate`, {
+      const safeFields = validateFields(fields);
+      const responseOptions = responseRanges === undefined ? {} : {
+        includeSpreadsheetInResponse: true, responseIncludeGridData: true, responseRanges: validateRanges(responseRanges),
+      };
+      const query = safeFields === undefined ? '' : `?${new URLSearchParams({ fields: safeFields })}`;
+      return requestJson(`${baseUrlFor(spreadsheetId)}:batchUpdate${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requests }),
+        body: JSON.stringify({ requests, ...responseOptions }),
       });
     },
   };

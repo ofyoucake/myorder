@@ -295,3 +295,24 @@ test('expired, failed, revoked and rotated tokens are not reused', async () => {
   await createGoogleSheetsClient({ ...options, credentialsJson: rotated.credentialsJson }).getSpreadsheet(MAIN_SPREADSHEET_ID);
   assert.equal(tokens, 5);
 });
+
+test('bounds combined reads and returns only requested post-write ranges', async () => {
+  const { credentialsJson } = await createCredentials();
+  const harness = createHarness();
+  const client = createGoogleSheetsClient({ credentialsJson, allowedSpreadsheetIds: [MAIN_SPREADSHEET_ID], fetchImpl: harness.fetchImpl, readOnly: false });
+  const ranges = ["'주문정보'!A2:M2", "'시스템_저장기록'!B2:B2"];
+  const fields = 'spreadsheetId,developerMetadata,sheets(properties,data(startRow,startColumn,rowData(values(effectiveValue))))';
+  await client.getSpreadsheet(MAIN_SPREADSHEET_ID, fields, { ranges });
+  assert.deepEqual(harness.requests[1].url.searchParams.getAll('ranges'), ranges);
+  await client.batchUpdate(MAIN_SPREADSHEET_ID, [{ updateCells: {} }], { responseRanges: ranges, fields });
+  const body = JSON.parse(harness.requests[2].init.body);
+  assert.equal(body.includeSpreadsheetInResponse, true);
+  assert.equal(body.responseIncludeGridData, true);
+  assert.deepEqual(body.responseRanges, ranges);
+  assert.equal(harness.requests[2].url.searchParams.get('fields'), fields);
+  for (const unsafe of ['Sheet1!A:M', "'시스템_저장기록'!B1:B20001"]) {
+    await assert.rejects(client.getSpreadsheet(MAIN_SPREADSHEET_ID, fields, { ranges: [unsafe] }), e => e.code === 'RANGE_NOT_ALLOWED');
+    await assert.rejects(client.batchUpdate(MAIN_SPREADSHEET_ID, [{}], { responseRanges: [unsafe] }), e => e.code === 'RANGE_NOT_ALLOWED');
+  }
+  assert.equal(harness.requests.length, 3);
+});
