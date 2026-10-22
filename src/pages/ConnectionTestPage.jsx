@@ -17,6 +17,16 @@ const DIAGNOSTIC_COPY = {
   FIELDS_NOT_ALLOWED: '시트 조회 항목이 안전 제한과 맞지 않습니다.',
   RESPONSE_TOO_LARGE: '시트 응답이 안전 크기 제한을 초과했습니다.',
   TIMEOUT: '구글 응답 대기 시간이 초과되었습니다.',
+  SERVER_AUTH_UNAVAILABLE: '서버의 관리자 계정 설정 또는 Supabase 인증 연결을 확인해야 합니다.',
+  SHEET_STRUCTURE_UNEXPECTED: '운영 탭의 이름, 행 수 또는 응답 구조를 확인해야 합니다.',
+  SHEETS_REQUEST_FAILED: '구글이 시트 조회 요청 형식을 거부했습니다.',
+  SHEETS_UNAUTHORIZED: '구글이 시트 조회 인증을 거부했습니다.',
+  SHEETS_RATE_LIMITED: '구글 시트 요청 한도에 도달했습니다.',
+  SHEETS_UPSTREAM_ERROR: '구글 시트 서버에 일시적인 오류가 있습니다.',
+  RESPONSE_INVALID: '구글 응답이 예상한 JSON 형식이 아닙니다.',
+  TOKEN_RESPONSE_INVALID: '구글 인증 응답의 형식이 예상과 다릅니다.',
+  SPREADSHEET_NOT_ALLOWED: '시트 ID가 서버 허용 목록과 일치하지 않습니다.',
+  NETWORK_ERROR: '서버에서 구글에 연결하지 못했습니다.',
 };
 
 const getErrorCode = (status, code) => {

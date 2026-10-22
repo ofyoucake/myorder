@@ -22,6 +22,9 @@ export async function onRequest(context) {
     if (authenticated && error instanceof GoogleSheetsError) {
       return serverJson({ error: { code: 'SERVICE_UNAVAILABLE', diagnosticCode: error.code } }, 503);
     }
+    if (error instanceof OrderServerError && error.code === 'SERVICE_UNAVAILABLE') {
+      return serverJson({ error: { code: 'SERVICE_UNAVAILABLE', diagnosticCode: authenticated ? 'SHEET_STRUCTURE_UNEXPECTED' : 'SERVER_AUTH_UNAVAILABLE' } }, 503);
+    }
     return serverError(error);
   }
 }
