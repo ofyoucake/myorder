@@ -17,14 +17,26 @@ const TEST_DOCUMENT_TITLE = '[테스트 전용·제작 금지] MyOrder 연동 �
 const TEST_HEADERS = ['이름', '디자인', '주문일자', '픽업일자', '맛선택', '시트', '사이즈', '크림', '요청사항', '특이사항', '주문경로', 'ID'];
 const TEST_SENTINEL_N1 = 'MYORDER_TEST_ONLY_DO_NOT_PREPARE';
 const TEST_SENTINEL_N2 = '[테스트 전용·제작 금지] 실제 예약이 아닙니다.';
-test('isolated real-API tests reject non-POST methods and any target override or body', async () => {
-  for (const method of ['GET', 'DELETE', 'PATCH']) {
+test('isolated real-API tests reject unsupported methods and any target override or nonempty body', async () => {
+  for (const method of ['DELETE', 'PATCH']) {
     assert.equal((await onRequest({ request: new Request(endpoint, { method }), env: {} })).status, 405);
   }
   const query = await onRequest({ request: new Request(`${endpoint}?spreadsheetId=production`, { method: 'POST' }), env: {} });
   assert.equal(query.status, 422);
   const body = await onRequest({ request: new Request(endpoint, { method: 'POST', body: '{}' }), env: {} });
   assert.equal(body.status, 422);
+});
+
+test('an empty Cloudflare-style POST body stream is not mistaken for a nonempty body', async () => {
+  const request = new Request(endpoint, { method: 'POST', headers: { Origin: 'https://myorder.example' },
+    body: new ReadableStream({ start(controller) { controller.close(); } }), duplex: 'half' });
+  const response = await onRequest({ request, env: { ORDER_ISOLATED_TESTS_ENABLED: 'true' } });
+  assert.equal(response.status, 401);
+});
+
+test('read-only test-state inspection still requires opt-in and owner authentication', async () => {
+  assert.equal((await onRequest({ request: new Request(endpoint), env: {} })).status, 403);
+  assert.equal((await onRequest({ request: new Request(endpoint), env: { ORDER_ISOLATED_TESTS_ENABLED: 'true' } })).status, 401);
 });
 
 test('isolated test execution is opt-in, same-origin and authenticated', async () => {
