@@ -2,11 +2,35 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { OrderCard } from '../components/OrderCard';
+import OrderFormModal from '../components/OrderFormModal';
+import OrderDetailModal, { OrderDeleteModal } from '../components/OrderDetailModal';
+import { canManageOrder, createOrdersClient, isUnknownWriteError } from '../api/orders';
 import { supabase } from '../supabaseClient';
 import Papa from 'papaparse';
 import { ORDER_TEXT_FIELDS, preserveOrderText, groupOrderText, matchesOrderFilters } from '../orderText';
 
 const KST_TIME_ZONE = 'Asia/Seoul';
+const isTestPage = typeof window !== 'undefined' && window.location.pathname === '/order-test';
+const ORDER_API_ENABLED = isTestPage || import.meta.env.VITE_ORDER_API_ENABLED === 'true';
+const ORDER_API_BASE_PATH = isTestPage ? '/api/order-tests' : '/api/orders';
+const DEFINITIVE_NON_WRITE_CODES = new Set([
+  'AUTH_REQUIRED',
+  'FORBIDDEN',
+  'CONFLICT',
+  'NOT_FOUND',
+  'VALIDATION_ERROR',
+  'ORDER_NOT_READY',
+  'RATE_LIMITED',
+]);
+const UNKNOWN_WRITE_MESSAGE = '처리 결과를 확인하지 못했습니다. 입력 내용은 잠겨 있습니다. 같은 요청으로 다시 확인하거나 서버 상태를 확인하기 전에는 새 작업을 시작하지 마세요.';
+const ordersClient = createOrdersClient({
+  basePath: ORDER_API_BASE_PATH,
+  getAccessToken: async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return null;
+    return data.session?.access_token;
+  },
+});
 
 const getKSTDateKey = (date = new Date()) => {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -34,8 +58,15 @@ const compareDateKeys = (left, right) => {
 };
 
 const getCalendarDateFromKey = (dateKey) => {
-  const [year, month, day] = normalizeDateKey(dateKey).split('.').map(Number);
-  return new Date(year, month - 1, day);
+  const normalized = normalizeDateKey(dateKey);
+  const parts = normalized.split('.').map(Number);
+  if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part))) return null;
+
+  const [year, month, day] = parts;
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    ? date
+    : null;
 };
 
 const DashboardPage = ({ session, onLogout }) => {
@@ -64,6 +95,15 @@ const DashboardPage = ({ session, onLogout }) => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [copiedType, setCopiedType] = useState(null);
+  const [orderEditor, setOrderEditor] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [mutationError, setMutationError] = useState('');
+  const [pendingMutation, setPendingMutation] = useState(null);
+  const [orderFeedback, setOrderFeedback] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const mutationLock = useRef(false);
+  const loadSequence = useRef(0);
 
   // Database Sync
   const [sheetInfo, setSheetInfo] = useState('');
@@ -119,13 +159,23 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const loadSheetData = useCallback(async (info) => {
-    if (!info) return;
+    if (!ORDER_API_ENABLED && !info) return;
+    const sequence = ++loadSequence.current;
     setLoading(true);
+    setLoadError('');
     try {
+      if (ORDER_API_ENABLED) {
+        const latestOrders = await ordersClient.list();
+        if (sequence === loadSequence.current) {
+          setOrders(latestOrders.map(order => ({ ...order, time: order.pickupDate.split(' ')[1] || '00:00', dateOnly: normalizeDateKey(order.pickupDate.split(' ')[0]) })));
+        }
+        return;
+      }
       let sheetId = info;
       if (info.includes('/d/')) sheetId = info.split('/d/')[1].split('/')[0];
       const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
       const response = await fetch(csvUrl);
+      if (!response.ok) throw new Error('시트를 불러오지 못했습니다.');
       const csvText = await response.text();
       
       // Use header: false to handle the empty column M header issue
@@ -134,7 +184,7 @@ const DashboardPage = ({ session, onLogout }) => {
         skipEmptyLines: true,
         complete: (results) => {
           // Skip the first header row
-          const dataRows = results.data.slice(1);
+          const dataRows = results.data.slice(1).filter(row => row.slice(0, 11).some(value => String(value || '').trim()));
           const mapped = dataRows.map((row, index) => {
             const pickupDateRaw = row[3] || ''; // Column D
             const [dPart, tPart] = pickupDateRaw.includes(' ') ? pickupDateRaw.split(' ') : [pickupDateRaw, '00:00'];
@@ -157,15 +207,19 @@ const DashboardPage = ({ session, onLogout }) => {
               requests: row[8] || '-', // I
               specialNotes: row[9] || '-', // J
               orderPath: row[10] || '-', // K
-              contact: row[11] || '-', // L
               price: parseInt((row[12] || '0').replace(/[^0-9]/g, '')) || 0, // M
             };
           });
-          setOrders(mapped);
-          setLoading(false);
+          if (sequence === loadSequence.current) setOrders(mapped);
         }
       });
-    } catch (e) { setLoading(false); }
+    } catch (error) {
+      if (sequence === loadSequence.current) {
+        setLoadError(ORDER_API_ENABLED ? error.message : '시트를 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해주세요.');
+      }
+    } finally {
+      if (sequence === loadSequence.current) setLoading(false);
+    }
   }, []);
 
   useEffect(() => { loadSheetData(sheetInfo); }, [sheetInfo, loadSheetData]);
@@ -174,6 +228,128 @@ const DashboardPage = ({ session, onLogout }) => {
     setSelectedOrder(order); 
     setShowDetailModal(true);
     setCopiedType(null);
+  };
+
+  const openOrderEditor = (order = null) => {
+    if (mutationLock.current || pendingMutation) return;
+    setMutationError('');
+    setOrderFeedback('');
+    setShowDetailModal(false);
+    setOrderEditor({ order, requestId: crypto.randomUUID(), editorKey: crypto.randomUUID() });
+  };
+
+  const closeOrderEditor = () => {
+    if (mutationLock.current || pendingMutation) return;
+    const editing = orderEditor?.order;
+    setOrderEditor(null);
+    setMutationError('');
+    if (editing) setShowDetailModal(true);
+  };
+
+  const saveOrder = async (input, retryRequestId = null) => {
+    const pendingSave = pendingMutation?.kind === 'save' ? pendingMutation : null;
+    const requestId = retryRequestId || orderEditor?.requestId;
+    if (
+      mutationLock.current
+      || !orderEditor
+      || !ORDER_API_ENABLED
+      || (pendingMutation && (!pendingSave || pendingSave.requestId !== requestId))
+    ) return;
+
+    const editor = orderEditor;
+    const submittedInput = pendingSave ? pendingSave.input : Object.freeze({ ...input });
+    mutationLock.current = true;
+    setMutationBusy(true);
+    setMutationError('');
+    try {
+      const saved = editor.order
+        ? await ordersClient.update(editor.order, submittedInput, requestId)
+        : await ordersClient.create(submittedInput, requestId);
+      const pickupParts = saved.pickupDate.split(' ');
+      const updated = { ...saved, time: pickupParts[1] || '00:00', dateOnly: normalizeDateKey(pickupParts[0]) };
+      ++loadSequence.current;
+      setLoading(false);
+      setLoadError('');
+      setOrders(previous => [...previous.filter(order => order.id !== updated.id), updated]);
+      setSelectedOrder(updated);
+      setCopiedType(null);
+      setPendingMutation(null);
+      if (updated.dateOnly) {
+        setSelectedDate(updated.dateOnly);
+        const calendarDate = getCalendarDateFromKey(updated.dateOnly);
+        if (calendarDate) setViewDate(calendarDate);
+      }
+      setStartDate(null);
+      setEndDate(null);
+      setActiveTab('day');
+      setOrderFeedback(editor.order ? '주문을 수정했습니다.' : '주문을 등록했습니다.');
+      setOrderEditor(null);
+      setShowDetailModal(true);
+    } catch (error) {
+      if (isUnknownWriteError(error)) {
+        setPendingMutation({ kind: 'save', order: editor.order, requestId, input: submittedInput });
+        setMutationError(UNKNOWN_WRITE_MESSAGE);
+      } else {
+        setPendingMutation(null);
+        setMutationError(error.message);
+        if (DEFINITIVE_NON_WRITE_CODES.has(error.code)) {
+          setOrderEditor(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
+        }
+      }
+    } finally {
+      mutationLock.current = false;
+      setMutationBusy(false);
+    }
+  };
+
+  const confirmDelete = async (retryRequestId = null) => {
+    const pendingDelete = pendingMutation?.kind === 'delete' ? pendingMutation : null;
+    const requestId = retryRequestId || deleteTarget?.requestId;
+    if (
+      mutationLock.current
+      || !deleteTarget
+      || !ORDER_API_ENABLED
+      || (pendingMutation && (!pendingDelete || pendingDelete.requestId !== requestId))
+    ) return;
+
+    const target = deleteTarget;
+    mutationLock.current = true;
+    setMutationBusy(true);
+    setMutationError('');
+    try {
+      const deletedId = await ordersClient.remove(target.order, requestId);
+      ++loadSequence.current;
+      setLoading(false);
+      setLoadError('');
+      setOrders(previous => previous.filter(order => order.id !== deletedId));
+      setPendingMutation(null);
+      setDeleteTarget(null);
+      setSelectedOrder(null);
+      setOrderFeedback('주문을 삭제했습니다.');
+    } catch (error) {
+      if (isUnknownWriteError(error)) {
+        setPendingMutation({ kind: 'delete', order: target.order, requestId });
+        setMutationError(UNKNOWN_WRITE_MESSAGE);
+      } else {
+        setPendingMutation(null);
+        setMutationError(error.message);
+        if (DEFINITIVE_NON_WRITE_CODES.has(error.code)) {
+          setDeleteTarget(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
+        }
+      }
+    } finally {
+      mutationLock.current = false;
+      setMutationBusy(false);
+    }
+  };
+
+  const retryPendingMutation = () => {
+    if (mutationLock.current || !pendingMutation) return;
+    if (pendingMutation.kind === 'save' && orderEditor?.requestId === pendingMutation.requestId) {
+      saveOrder(pendingMutation.input, pendingMutation.requestId);
+    } else if (pendingMutation.kind === 'delete' && deleteTarget?.requestId === pendingMutation.requestId) {
+      confirmDelete(pendingMutation.requestId);
+    }
   };
 
   // ─── 메시지 복사 헬퍼 함수 ───────────────────────────────────────
@@ -547,6 +723,12 @@ const DashboardPage = ({ session, onLogout }) => {
             </div>
           </div>
           <div className="dash-header-actions" style={{ display: 'flex', gap: '8px' }}>
+            {ORDER_API_ENABLED && (
+              <button type="button" className="order-create-button" onClick={() => openOrderEditor()} disabled={mutationBusy || Boolean(pendingMutation)}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                주문 등록
+              </button>
+            )}
             {/* 모바일: 날짜 팝업 버튼 제거 — 달력은 카드 하단에 항상 표시 */}
             <div style={{ position: 'relative' }}>
               <div className="filter-toggle-btn" onClick={() => setShowFilterPicker(!showFilterPicker)} style={{ padding: '12px 24px', backgroundColor: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'var(--shadow-elevation)', color: activeFiltersCount > 0 ? 'var(--point)' : 'inherit' }}>
@@ -781,6 +963,23 @@ const DashboardPage = ({ session, onLogout }) => {
       </div>
 
       <div className="main-content" style={{ flex: 1, maxWidth: '1200px', paddingBottom: '100px' }}>
+        {isTestPage && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: '24px',
+              padding: '16px 20px',
+              border: '2px solid #be123c',
+              borderRadius: '16px',
+              backgroundColor: '#fff1f2',
+              color: '#881337',
+              fontWeight: '700',
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: '4px' }}>[테스트 전용·제작 금지] 테스트 시트</strong>
+            <span>이 화면은 `/api/order-tests`만 사용하며 운영 시트 CSV fallback을 사용하지 않습니다. 모든 등록·수정·삭제는 테스트 문서에서만 수행됩니다.</span>
+          </div>
+        )}
         <header className="header-actions" style={{ marginBottom: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ width: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -810,91 +1009,55 @@ const DashboardPage = ({ session, onLogout }) => {
           </div>
         </header>
 
+        {orderFeedback && <div className="order-feedback" role="status"><span>{orderFeedback}</span><button type="button" aria-label="안내 닫기" onClick={() => setOrderFeedback('')}>×</button></div>}
+        {loadError && <div className="order-feedback order-feedback--error" role="alert"><span>{loadError}</span><button type="button" onClick={() => loadSheetData(sheetInfo)}>다시 불러오기</button></div>}
         {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'statistics' ? renderStatistics() : renderMyPage()}
 
         {showDetailModal && selectedOrder && (
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, backdropFilter: 'blur(10px)', padding: '0 0 80px 0' }}>
-            <div className="card modal-content" style={{ width: '90%', maxWidth: '700px', padding: '0', borderRadius: '32px', position: 'relative', border: 'none', animation: 'slideUp 0.3s ease-out', overflow: 'hidden', maxHeight: '90vh', overflowY: 'auto' }}>
-              <div style={{ padding: '32px', backgroundColor: 'white' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
-                  <h2 style={{ fontSize: '22px', fontWeight: '800' }}>주문 상세 내역</h2>
-                  <button onClick={() => setShowDetailModal(false)} style={{ border: 'none', background: 'none', fontSize: '28px', cursor: 'pointer', opacity: 0.3 }}>×</button>
-                </div>
-
-                <div className="modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                  {/* Basic Info Card */}
-                  <div style={{ padding: '24px', borderRadius: '20px', border: '1px solid var(--line)', backgroundColor: '#F8FAFC' }}>
-                    <h4 style={{ fontSize: '14px', fontWeight: '800', color: 'var(--point)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>📅 기본 정보</h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>고객명</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.customer}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>연락처</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.contact}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>주문일자</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.orderDate}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>픽업일시</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.pickupDate}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>주문경로</label><div style={{ fontSize: '13px', fontWeight: '700', marginTop: '4px', display: 'inline-block', padding: '4px 12px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid var(--line)' }}>{selectedOrder.orderPath}</div></div>
-                    </div>
-                  </div>
-
-                  {/* Cake Info Card */}
-                  <div style={{ padding: '24px', borderRadius: '20px', border: '1px solid #FFE4E6', backgroundColor: '#FFF9F9' }}>
-                    <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#E11D48', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>🎂 케이크 정보</h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '20px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>디자인</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.design}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>맛 선택</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.flavor}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>시트</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.sheet}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>사이즈</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.size}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>크림</label><div style={{ fontSize: '15px', fontWeight: '700', marginTop: '4px' }}>{selectedOrder.cream}</div></div>
-                      <div><label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>가격</label><div style={{ fontSize: '15px', fontWeight: '800', color: 'var(--point)', marginTop: '4px' }}>{selectedOrder.price.toLocaleString()}원</div></div>
-                    </div>
-                    <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px dashed #FDA4AF' }}>
-                      <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-sub)' }}>요청/특이사항</label>
-                      <div style={{ fontSize: '14px', fontWeight: '500', marginTop: '8px', lineHeight: '1.6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                        {selectedOrder.requests} / {selectedOrder.specialNotes}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 메시지 복사 버튼 섹션 */}
-                <div style={{ marginTop: '28px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
-                  <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-sub)', marginBottom: '12px' }}>📋 메시지 복사</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
-                    {[
-                      { type: 'order',       label: '📄 주문서' },
-                      { type: 'reservation', label: '✅ 예약확정' },
-                      { type: 'pickup',      label: '🚗 픽업안내' },
-                      { type: 'unmanned',    label: '🔓 무인픽업안내' },
-                    ].map(({ type, label }) => (
-                      <button
-                        key={type}
-                        onClick={() => handleCopy(type, selectedOrder)}
-                        style={{
-                          padding: '12px 8px',
-                          borderRadius: '12px',
-                          border: `1px solid ${copiedType === type ? '#10B981' : 'var(--line)'}`,
-                          background: copiedType === type ? '#ECFDF5' : 'white',
-                          color: copiedType === type ? '#10B981' : 'var(--text-main)',
-                          fontWeight: '700',
-                          fontSize: '13px',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '4px',
-                        }}
-                      >
-                        {copiedType === type ? '✓ 복사됨!' : label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ textAlign: 'right' }}>
-                  <Button onClick={() => setShowDetailModal(false)} size="large" style={{ width: '100%' }}>닫기</Button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <OrderDetailModal
+            order={selectedOrder}
+            onClose={() => setShowDetailModal(false)}
+            onCopy={handleCopy}
+            copiedType={copiedType}
+            editable={ORDER_API_ENABLED && canManageOrder(selectedOrder)}
+            onEdit={() => openOrderEditor(selectedOrder)}
+            onDelete={() => {
+              if (pendingMutation) return;
+              setMutationError('');
+              setShowDetailModal(false);
+              setDeleteTarget({ order: selectedOrder, requestId: crypto.randomUUID() });
+            }}
+          />
+        )}
+        {orderEditor && (
+          <OrderFormModal
+            key={orderEditor.editorKey}
+            initialOrder={orderEditor.order}
+            defaultDate={orderEditor.order ? getKSTDateKey() : selectedDate}
+            options={Object.fromEntries(['design', 'flavor', 'sheet', 'size', 'cream', 'orderPath'].map(field => [field, [...new Set(orders.map(order => order[field]).filter(value => value && value !== '-'))]]))}
+            onSave={saveOrder}
+            onCancel={closeOrderEditor}
+            busy={mutationBusy}
+            pending={pendingMutation?.kind === 'save'}
+            onRetry={retryPendingMutation}
+            error={mutationError}
+          />
+        )}
+        {deleteTarget && (
+          <OrderDeleteModal
+            order={deleteTarget.order}
+            busy={mutationBusy}
+            pending={pendingMutation?.kind === 'delete'}
+            error={mutationError}
+            onDelete={confirmDelete}
+            onRetry={retryPendingMutation}
+            onClose={() => {
+              if (mutationLock.current || pendingMutation) return;
+              setDeleteTarget(null);
+              setMutationError('');
+              setShowDetailModal(true);
+            }}
+          />
         )}
       </div>
 

@@ -72,6 +72,7 @@ export default function ConnectionTestPage({ session }) {
   const [testResult, setTestResult] = useState(null);
   const [testErrorCode, setTestErrorCode] = useState('');
   const [testState, setTestState] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const testBusyRef = useRef(false);
   const handleConnectionTest = async () => {
     if (testBusyRef.current) return;
@@ -129,6 +130,12 @@ export default function ConnectionTestPage({ session }) {
       const state = await inspection.json().catch(() => null);
       if (inspection.ok && state?.readOnly === true && typeof state.testDocument === 'boolean'
         && typeof state.lockPresent === 'boolean' && Number.isSafeInteger(state.occupiedTestRows)) setTestState(state);
+      const readyResponse = await fetch('/api/orders/readiness', {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${currentSession.access_token}` }, cache: 'no-store',
+      });
+      const ready = await readyResponse.json().catch(() => null);
+      if (readyResponse.ok && ready?.readOnly === true && typeof ready.ready === 'boolean'
+        && Array.isArray(ready.incompatibleRows) && ready.incompatibleRows.every(Number.isSafeInteger)) setReadiness(ready);
     } catch {
       setErrorCode('SERVICE_UNAVAILABLE');
       setStatus('error');
@@ -311,6 +318,7 @@ export default function ConnectionTestPage({ session }) {
               <div className="connection-test-notice connection-test-isolated" role="note">
                 <div>
                   {testState && <p>테스트 문서 확인: {testState.testDocument ? '대상 일치' : '대상 불일치'} / 잔여 데이터 {testState.occupiedTestRows}행 / 잠금 {testState.lockPresent ? '있음 — 재실행 금지' : '없음'}</p>}
+                  {readiness && <p>기존 주문 형식 검증: {readiness.ready ? '통과' : `확인 필요 — ${readiness.incompatibleRows.join(', ')}행`}</p>}
                   <p>
                   운영 예약은 읽기 전용으로 보호합니다. 별도 [테스트 전용·제작 금지] 문서에서만 테스트 데이터의 등록·수정·삭제를 실제로 검증하고 정리합니다.
                   </p>
