@@ -247,3 +247,51 @@ test('keeps the request timeout active while reading a response body', { timeout
     (error) => error instanceof GoogleSheetsError && error.code === 'TIMEOUT' && error.status === 504,
   );
 });
+
+test('reuses a scoped Google token across clients and coalesces simultaneous issuance', async () => {
+  const { credentialsJson } = await createCredentials();
+  const harness = createHarness();
+  const tokenCache = new Map();
+  const options = { credentialsJson, allowedSpreadsheetIds: [MAIN_SPREADSHEET_ID], fetchImpl: harness.fetchImpl, now: harness.now, tokenCache };
+  await Promise.all([
+    createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID),
+    createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID),
+  ]);
+  await createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID);
+  assert.equal(harness.requests.filter(r => r.url.origin === 'https://oauth2.googleapis.com').length, 1);
+  await createGoogleSheetsClient({ ...options, readOnly: false }).getSpreadsheet(MAIN_SPREADSHEET_ID);
+  assert.equal(harness.requests.filter(r => r.url.origin === 'https://oauth2.googleapis.com').length, 2, 'read-only and write scopes cannot share tokens');
+});
+
+test('expired, failed, revoked and rotated tokens are not reused', async () => {
+  const { credentialsJson } = await createCredentials();
+  const rotated = await createCredentials();
+  let clock = 1_700_000_000_000;
+  let tokens = 0;
+  let tokenFailure = true;
+  let revoked = false;
+  const options = {
+    credentialsJson, allowedSpreadsheetIds: [MAIN_SPREADSHEET_ID], tokenCache: new Map(), now: () => clock,
+    fetchImpl: async input => {
+      if (new URL(input).origin === 'https://oauth2.googleapis.com') {
+        tokens++;
+        return tokenFailure ? jsonResponse(503, {}) : jsonResponse(200, { access_token: 'test-token', expires_in: 3600 });
+      }
+      return jsonResponse(revoked ? 401 : 200, {});
+    },
+  };
+  await assert.rejects(createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID));
+  tokenFailure = false;
+  await createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID);
+  assert.equal(tokens, 2);
+  clock += 3_550_000;
+  await createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID);
+  assert.equal(tokens, 3);
+  revoked = true;
+  await assert.rejects(createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID));
+  revoked = false;
+  await createGoogleSheetsClient(options).getSpreadsheet(MAIN_SPREADSHEET_ID);
+  assert.equal(tokens, 4);
+  await createGoogleSheetsClient({ ...options, credentialsJson: rotated.credentialsJson }).getSpreadsheet(MAIN_SPREADSHEET_ID);
+  assert.equal(tokens, 5);
+});

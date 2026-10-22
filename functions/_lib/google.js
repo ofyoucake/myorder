@@ -10,6 +10,9 @@ const MAX_RANGE_COLUMN = 23; // W: production read boundary is A1:W1996; client 
 const ALLOWED_QUOTED_SHEET_NAMES = new Set(['주문정보', '테스트_제작금지']);
 const MAX_FIELDS_LENGTH = 512;
 const MAX_BATCH_REQUESTS = 100;
+const defaultFetch = (...args) => globalThis.fetch(...args);
+const sharedTokenCache = new Map();
+const MAX_CACHED_CREDENTIALS = 4;
 
 const SAFE_MESSAGES = {
   CONFIG_INVALID: 'Google Sheets configuration is invalid.',
@@ -245,13 +248,14 @@ const fetchWithTimeout = async (fetchImpl, url, init, timeoutMs, consume = respo
 export function createGoogleSheetsClient({
   credentialsJson,
   allowedSpreadsheetIds,
-  fetchImpl = (...args) => globalThis.fetch(...args),
+  fetchImpl = defaultFetch,
   now = () => Date.now(),
   readOnly = true,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  tokenCache = fetchImpl === defaultFetch ? sharedTokenCache : new Map(),
 } = {}) {
   if (!Array.isArray(allowedSpreadsheetIds) || allowedSpreadsheetIds.length === 0) fail('CONFIG_INVALID', 500);
-  if (typeof fetchImpl !== 'function' || typeof now !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  if (typeof fetchImpl !== 'function' || typeof now !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || !(tokenCache instanceof Map)) {
     fail('CONFIG_INVALID', 500);
   }
 
@@ -272,13 +276,12 @@ export function createGoogleSheetsClient({
   const allowedIds = new Set(allowedSpreadsheetIds);
   if ([...allowedIds].some((id) => !isSafeSpreadsheetId(id))) fail('CONFIG_INVALID', 500);
   const scope = readOnly ? SPREADSHEETS_READONLY_SCOPE : SPREADSHEETS_SCOPE;
-  let cachedToken;
-  let cachedTokenExpiresAt = 0;
+  // Server memory only; scope and key rotation partition the bounded cache.
+  // Neither cache keys nor their values may be logged or returned to callers.
+  const cacheKey = `${credentials.client_email}\n${scope}\n${credentials.private_key}`;
 
-  const getAccessToken = async () => {
+  const issueToken = async () => {
     const currentTime = now();
-    if (cachedToken && currentTime < cachedTokenExpiresAt - 60_000) return cachedToken;
-
     const assertion = await createJwt(credentials, scope, now);
     const data = await fetchWithTimeout(fetchImpl, TOKEN_ENDPOINT, {
       method: 'POST',
@@ -300,9 +303,22 @@ export function createGoogleSheetsClient({
       fail('TOKEN_RESPONSE_INVALID', 502);
     }
     const expiresIn = Number(data.expires_in);
-    cachedToken = data.access_token;
-    cachedTokenExpiresAt = currentTime + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 3600_000);
-    return cachedToken;
+    return { token: data.access_token, expiresAt: currentTime + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 3600_000) };
+  };
+
+  const getAccessToken = async () => {
+    let entry = tokenCache.get(cacheKey);
+    if (entry?.token && now() < entry.expiresAt - 60_000) return entry.token;
+    if (!entry?.pending) {
+      while (tokenCache.size >= MAX_CACHED_CREDENTIALS && !tokenCache.has(cacheKey)) tokenCache.delete(tokenCache.keys().next().value);
+      entry = {};
+      tokenCache.set(cacheKey, entry);
+      entry.pending = issueToken().then(value => { Object.assign(entry, value); return value.token; }).catch(error => {
+        if (tokenCache.get(cacheKey) === entry) tokenCache.delete(cacheKey);
+        throw error;
+      }).finally(() => { delete entry.pending; });
+    }
+    return entry.pending;
   };
 
   const requestJson = async (url, init, errorMapper = mapSheetsError) => {
@@ -316,6 +332,7 @@ export function createGoogleSheetsClient({
       },
     }, timeoutMs, async (response) => {
       if (!response.ok) {
+        if (response.status === 401 && tokenCache.get(cacheKey)?.token === token) tokenCache.delete(cacheKey);
         await readBoundedText(response).catch((error) => {
           if (error?.code === 'TIMEOUT') throw error;
         });
