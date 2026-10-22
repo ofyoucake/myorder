@@ -304,15 +304,37 @@ test('bounds combined reads and returns only requested post-write ranges', async
   const fields = 'spreadsheetId,developerMetadata,sheets(properties,data(startRow,startColumn,rowData(values(effectiveValue))))';
   await client.getSpreadsheet(MAIN_SPREADSHEET_ID, fields, { ranges });
   assert.deepEqual(harness.requests[1].url.searchParams.getAll('ranges'), ranges);
-  await client.batchUpdate(MAIN_SPREADSHEET_ID, [{ updateCells: {} }], { responseRanges: ranges, fields });
+  const writeFields = `spreadsheetId,updatedSpreadsheet(${fields})`;
+  await client.batchUpdate(MAIN_SPREADSHEET_ID, [{ updateCells: {} }], { responseRanges: ranges, fields: writeFields });
   const body = JSON.parse(harness.requests[2].init.body);
   assert.equal(body.includeSpreadsheetInResponse, true);
   assert.equal(body.responseIncludeGridData, true);
   assert.deepEqual(body.responseRanges, ranges);
-  assert.equal(harness.requests[2].url.searchParams.get('fields'), fields);
+  assert.equal(harness.requests[2].url.searchParams.get('fields'), writeFields);
   for (const unsafe of ['Sheet1!A:M', "'시스템_저장기록'!B1:B20001"]) {
     await assert.rejects(client.getSpreadsheet(MAIN_SPREADSHEET_ID, fields, { ranges: [unsafe] }), e => e.code === 'RANGE_NOT_ALLOWED');
     await assert.rejects(client.batchUpdate(MAIN_SPREADSHEET_ID, [{}], { responseRanges: [unsafe] }), e => e.code === 'RANGE_NOT_ALLOWED');
   }
   assert.equal(harness.requests.length, 3);
+});
+
+test('combined grid responses have a separate bounded capacity for per-cell JSON overhead', async () => {
+  const { credentialsJson } = await createCredentials();
+  let size = 1_000_064;
+  const harness = createHarness({ apiResponse: { ok: true, status: 200, text: async () => JSON.stringify({ padding: 'x'.repeat(size) }) } });
+  const client = createGoogleSheetsClient({ credentialsJson, allowedSpreadsheetIds: [MAIN_SPREADSHEET_ID], fetchImpl: harness.fetchImpl });
+  await client.getSpreadsheet(MAIN_SPREADSHEET_ID, 'sheets(data(rowData(values(effectiveValue))))', { ranges: ["'주문정보'!A1:M1996"] });
+  size = 4_000_001;
+  await assert.rejects(client.getSpreadsheet(MAIN_SPREADSHEET_ID, 'sheets(data(rowData(values(effectiveValue))))', { ranges: ["'주문정보'!A1:M1996"] }), e => e.code === 'RESPONSE_TOO_LARGE');
+});
+
+test('emits only fixed phase names and numeric durations, with no credentials or reservation data', async () => {
+  const { credentialsJson } = await createCredentials();
+  const harness = createHarness();
+  const metrics = [];
+  const client = createGoogleSheetsClient({ credentialsJson, allowedSpreadsheetIds: [MAIN_SPREADSHEET_ID], fetchImpl: harness.fetchImpl, readOnly: false, onMetric: metric => metrics.push(metric) });
+  await client.getSpreadsheet(MAIN_SPREADSHEET_ID);
+  await client.batchUpdate(MAIN_SPREADSHEET_ID, [{ updateCells: {} }]);
+  assert.deepEqual(metrics.map(m => m.name), ['google_auth', 'sheets_read', 'sheets_write']);
+  assert.ok(metrics.every(m => Number.isFinite(m.durationMs) && m.durationMs >= 0 && Object.keys(m).length === 2));
 });

@@ -101,3 +101,22 @@ test('ID synchronization has a separate bodyless-intent contract and cannot beco
   const invalid = await handleOrdersRequest({ request: make('POST', { row: 2 }), env, params: { id: 'ids' } }, h.dependencies);
   assert.equal(invalid.status, 422);
 });
+
+test('authorized responses expose bounded numeric server timing without sensitive data', async () => {
+  const h = harness();
+  h.dependencies.createClient = options => {
+    options.onMetric({ name: 'google_auth', durationMs: 12.5 });
+    options.onMetric({ name: 'sheets_read', durationMs: 100 });
+    options.onMetric({ name: 'sheets_read', durationMs: 90 });
+    options.onMetric({ name: 'sheets_write', durationMs: 50 });
+    options.onMetric({ name: 'private-customer-or-token', durationMs: 999 });
+    return {};
+  };
+  const response = await handleOrdersRequest({ request: make(), env }, h.dependencies);
+  const timing = response.headers.get('Server-Timing');
+  assert.match(timing, /google_auth;dur=12.5/);
+  assert.match(timing, /sheets_read;dur=190.0;desc="2 calls"/);
+  assert.match(timing, /sheets_write;dur=50.0;desc="1 calls"/);
+  assert.ok(!timing.includes('private-customer'));
+  assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+});

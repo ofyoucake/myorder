@@ -5,6 +5,7 @@ const SPREADSHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const SPREADSHEETS_READONLY_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
+const MAX_GRID_RESPONSE_BYTES = 4_000_000; // Bounded grid cells carry more JSON overhead than values arrays.
 const MAX_RANGE_ROW = 20_000;
 const MAX_RANGE_COLUMN = 23; // W: production read boundary is A1:W1996; client growth ceiling is 20,000 rows.
 const ALLOWED_QUOTED_SHEET_NAMES = new Set(['주문정보', '테스트_제작금지', '시스템_저장기록']);
@@ -172,7 +173,7 @@ const createJwt = async (credentials, scope, now) => {
   return `${signingInput}.${toBase64Url(new Uint8Array(signature))}`;
 };
 
-const readBoundedText = async (response) => {
+const readBoundedText = async (response, maxBytes = MAX_RESPONSE_BYTES) => {
   if (response.body?.getReader) {
     const reader = response.body.getReader();
     const chunks = [];
@@ -182,7 +183,7 @@ const readBoundedText = async (response) => {
         const { done, value } = await reader.read();
         if (done) break;
         length += value.byteLength;
-        if (length > MAX_RESPONSE_BYTES) {
+        if (length > maxBytes) {
           await reader.cancel();
           fail('RESPONSE_TOO_LARGE', 502);
         }
@@ -209,12 +210,12 @@ const readBoundedText = async (response) => {
     if (error?.name === 'AbortError') fail('TIMEOUT', 504);
     fail('NETWORK_ERROR', 502);
   }
-  if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) fail('RESPONSE_TOO_LARGE', 502);
+  if (new TextEncoder().encode(text).byteLength > maxBytes) fail('RESPONSE_TOO_LARGE', 502);
   return text;
 };
 
-const readJson = async (response) => {
-  const text = await readBoundedText(response);
+const readJson = async (response, maxBytes) => {
+  const text = await readBoundedText(response, maxBytes);
   try {
     return JSON.parse(text);
   } catch {
@@ -258,9 +259,10 @@ export function createGoogleSheetsClient({
   readOnly = true,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   tokenCache = fetchImpl === defaultFetch ? sharedTokenCache : new Map(),
+  onMetric = () => {},
 } = {}) {
   if (!Array.isArray(allowedSpreadsheetIds) || allowedSpreadsheetIds.length === 0) fail('CONFIG_INVALID', 500);
-  if (typeof fetchImpl !== 'function' || typeof now !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || !(tokenCache instanceof Map)) {
+  if (typeof fetchImpl !== 'function' || typeof now !== 'function' || typeof onMetric !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || !(tokenCache instanceof Map)) {
     fail('CONFIG_INVALID', 500);
   }
 
@@ -284,6 +286,14 @@ export function createGoogleSheetsClient({
   // Server memory only; scope and key rotation partition the bounded cache.
   // Neither cache keys nor their values may be logged or returned to callers.
   const cacheKey = `${credentials.client_email}\n${scope}\n${credentials.private_key}`;
+  const measured = async (name, work) => {
+    const started = performance.now();
+    try { return await work(); }
+    finally {
+      // Telemetry cannot turn a committed write into a failure.
+      try { onMetric({ name, durationMs: Math.max(0, performance.now() - started) }); } catch { /* no-op */ }
+    }
+  };
 
   const issueToken = async () => {
     const currentTime = now();
@@ -318,7 +328,7 @@ export function createGoogleSheetsClient({
       while (tokenCache.size >= MAX_CACHED_CREDENTIALS && !tokenCache.has(cacheKey)) tokenCache.delete(tokenCache.keys().next().value);
       entry = {};
       tokenCache.set(cacheKey, entry);
-      entry.pending = issueToken().then(value => { Object.assign(entry, value); return value.token; }).catch(error => {
+      entry.pending = measured('google_auth', issueToken).then(value => { Object.assign(entry, value); return value.token; }).catch(error => {
         if (tokenCache.get(cacheKey) === entry) tokenCache.delete(cacheKey);
         throw error;
       }).finally(() => { delete entry.pending; });
@@ -326,9 +336,9 @@ export function createGoogleSheetsClient({
     return entry.pending;
   };
 
-  const requestJson = async (url, init, errorMapper = mapSheetsError) => {
+  const requestJson = async (url, init, maxBytes = MAX_RESPONSE_BYTES) => {
     const token = await getAccessToken();
-    return fetchWithTimeout(fetchImpl, url, {
+    return measured(init.method === 'GET' ? 'sheets_read' : 'sheets_write', () => fetchWithTimeout(fetchImpl, url, {
       ...init,
       headers: {
         Accept: 'application/json',
@@ -341,10 +351,10 @@ export function createGoogleSheetsClient({
         await readBoundedText(response).catch((error) => {
           if (error?.code === 'TIMEOUT') throw error;
         });
-        fail(errorMapper(response.status), response.status || 502);
+        fail(mapSheetsError(response.status), response.status || 502);
       }
-      return readJson(response);
-    });
+      return readJson(response, maxBytes);
+    }));
   };
 
   const baseUrlFor = (spreadsheetId) => `${SHEETS_ENDPOINT}/${encodeURIComponent(validateSpreadsheetId(spreadsheetId, allowedIds))}`;
@@ -356,7 +366,7 @@ export function createGoogleSheetsClient({
       if (safeFields !== undefined) params.set('fields', safeFields);
       if (ranges !== undefined) validateRanges(ranges).forEach(range => params.append('ranges', range));
       const query = params.toString();
-      return requestJson(`${baseUrlFor(spreadsheetId)}${query ? `?${query}` : ''}`, { method: 'GET' });
+      return requestJson(`${baseUrlFor(spreadsheetId)}${query ? `?${query}` : ''}`, { method: 'GET' }, ranges === undefined ? MAX_RESPONSE_BYTES : MAX_GRID_RESPONSE_BYTES);
     },
 
     async getValues(spreadsheetId, range, { valueRenderOption = 'FORMATTED_VALUE' } = {}) {

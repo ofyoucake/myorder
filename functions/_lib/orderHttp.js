@@ -36,6 +36,20 @@ async function readBody(request) {
 export async function handleOrdersRequest({ request, env, params = {} }, {
   createStore, testTarget = false, authorize = authorizeOrderAdmin, createClient = createGoogleSheetsClient,
 } = {}) {
+  const started = performance.now();
+  const phases = new Map(['auth', 'google_auth', 'sheets_read', 'sheets_write'].map(name => [name, { duration: 0, count: 0 }]));
+  const onMetric = ({ name, durationMs }) => {
+    const phase = phases.get(name);
+    if (!phase || !Number.isFinite(durationMs) || durationMs < 0 || durationMs > 600000) return;
+    phase.duration += durationMs;
+    phase.count++;
+  };
+  const respond = (body, status) => {
+    const response = serverJson(body, status);
+    const entries = [...phases].map(([name, phase]) => `${name};dur=${phase.duration.toFixed(1)};desc="${phase.count} calls"`);
+    response.headers.set('Server-Timing', [...entries, `total;dur=${Math.max(0, performance.now() - started).toFixed(1)}`].join(', '));
+    return response;
+  };
   try {
     const flag = testTarget ? env.ORDER_ISOLATED_TESTS_ENABLED : env.ORDER_API_ENABLED;
     if (flag !== 'true') throw new OrderServerError('FORBIDDEN', 403);
@@ -47,7 +61,9 @@ export async function handleOrdersRequest({ request, env, params = {} }, {
     const method = request.method;
     if (!(synchronize ? ['POST'] : id ? ['PATCH', 'DELETE'] : ['GET', 'POST']).includes(method)) throw new OrderServerError('METHOD_NOT_ALLOWED', 405);
     if (method !== 'GET' && request.headers.get('Origin') !== url.origin) throw new OrderServerError('FORBIDDEN', 403);
+    const authStarted = performance.now();
     await authorize(request, env);
+    onMetric({ name: 'auth', durationMs: performance.now() - authStarted });
 
     let body;
     if (method !== 'GET') {
@@ -62,13 +78,13 @@ export async function handleOrdersRequest({ request, env, params = {} }, {
       }
     }
     const target = TARGETS[testTarget ? 'test' : 'production'];
-    const client = createClient({ credentialsJson: env.GOOGLE_SERVICE_ACCOUNT_JSON, allowedSpreadsheetIds: [target.spreadsheetId], readOnly: method === 'GET' });
+    const client = createClient({ credentialsJson: env.GOOGLE_SERVICE_ACCOUNT_JSON, allowedSpreadsheetIds: [target.spreadsheetId], readOnly: method === 'GET', onMetric });
     const store = createStore({ client, ...target });
-    if (synchronize) return serverJson(await store.ensureIds());
-    if (method === 'GET') return serverJson({ orders: await store.list() });
-    if (method === 'POST') return serverJson({ order: await store.create(body.order, body.requestId) }, 201);
-    if (method === 'PATCH') return serverJson({ order: await store.update(id, body.order, body.expectedRevision, body.requestId) });
-    return serverJson({ deletedId: await store.remove(id, body.expectedRevision, body.requestId) });
+    if (synchronize) return respond(await store.ensureIds());
+    if (method === 'GET') return respond({ orders: await store.list() });
+    if (method === 'POST') return respond({ order: await store.create(body.order, body.requestId) }, 201);
+    if (method === 'PATCH') return respond({ order: await store.update(id, body.order, body.expectedRevision, body.requestId) });
+    return respond({ deletedId: await store.remove(id, body.expectedRevision, body.requestId) });
   } catch (error) {
     return serverError(error);
   }
