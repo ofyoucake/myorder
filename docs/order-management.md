@@ -51,6 +51,24 @@ then enable production UI. Never test create/update/delete on a real reservation
 Rollback disables frontend/backend flags or restores the previous successful Pages
 deployment. Keep assigned L IDs; reverting a deploy does not require clearing them.
 
+## Verification completed before production activation (2026-10-22 KST)
+
+- 75 Node tests passed; focused changed-file ESLint and production build passed.
+- A separate temporary headless Chrome profile verified form layout at 320, 768,
+  1024 and 1440 pixels, focus containment, and the actual delete-confirmation flow.
+  Run `node tests/preview-server.mjs`, then `node tests/responsive-qc.mjs` locally.
+- The deployed owner UI created, edited and deleted an unmistakably labelled test
+  order in the isolated document. Clearing C/I, preserving spaces/newlines, native
+  D date values, and storing `=1+1` as literal text were verified through native cells.
+- A direct edit in the isolated sheet was reflected after refreshing the website.
+- The isolated primitive test verified sorting, middle gaps, L-targeted editing,
+  deletion and M-formula preservation. No operational reservation was a fixture.
+- The isolated document has no remaining test orders or lock. Production readiness
+  passed for 1,168 existing orders. The temporary test flag is removed for rollout.
+
+Production ID backfill and post-activation integrity checks are still required;
+the above is not a claim that migration has already happened.
+
 Validation: `node --test tests/*.test.js`, focused ESLint, production build, actual
 Google API checks and browser QC. Repository-wide ESLint has pre-existing failures
 in Button/Input/OrderCard/Login/Dashboard; do not mistake focused lint for a clean
