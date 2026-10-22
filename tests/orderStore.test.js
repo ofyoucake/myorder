@@ -40,6 +40,7 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
   rows.forEach((row, index) => { grid[index + 1].splice(0, row.length, ...row); });
   const metadata = [];
   const batches = [];
+  const calls = [];
   let nextMetadataId = 700;
   let mutationApplied = false;
   let shouldLoseResponse = responseLost;
@@ -86,17 +87,29 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
 
   return {
     batches,
+    calls,
     get state() { return { grid: clone(grid), metadata: clone(metadata) }; },
-    getSpreadsheet: async (id, fields) => {
+    getSpreadsheet: async (id, fields, options = {}) => {
+      calls.push('getSpreadsheet');
       assert.ok([TEST_SPREADSHEET_ID, PRODUCTION_SPREADSHEET_ID].includes(id));
       assert.match(fields, /developerMetadata/);
-      return {
+      const data = {
         spreadsheetId: id,
         developerMetadata: clone(metadata),
         sheets: [{ properties: { sheetId: SHEET_ID, title: SHEET_TITLE, gridProperties: { rowCount: grid.length, columnCount: 26 } } }],
       };
+      if (options.ranges) {
+        assert.deepEqual(options.ranges, [`'${SHEET_TITLE}'!A1:M${grid.length}`]);
+        if (shouldSort) {
+          shouldSort = false;
+          grid.splice(1, grid.length - 1, ...grid.slice(1).sort((a, b) => String(a[3]).localeCompare(String(b[3]))));
+        }
+        data.sheets[0].data = [{ rowData: grid.map(row => ({ values: row.slice(0, 13).map(value => ({ effectiveValue: typeof value === 'number' ? { numberValue: value } : { stringValue: value } })) })) }];
+      }
+      return data;
     },
     getValues: async (id, range, options) => {
+      calls.push('getValues');
       assert.ok([TEST_SPREADSHEET_ID, PRODUCTION_SPREADSHEET_ID].includes(id));
       const width = range.endsWith(`:W${grid.length}`) ? 23 : 13;
       assert.equal(range, `'${SHEET_TITLE}'!A1:${width === 23 ? 'W' : 'M'}${grid.length}`);
@@ -112,7 +125,8 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
       }
       return { range, majorDimension: 'ROWS', values: clone(grid).map(row => row.slice(0, width)) };
     },
-    batchUpdate: async (id, requests) => {
+    batchUpdate: async (id, requests, options = {}) => {
+      calls.push('batchUpdate');
       assert.ok([TEST_SPREADSHEET_ID, PRODUCTION_SPREADSHEET_ID].includes(id));
       assert.ok(Array.isArray(requests));
       const before = { grid: clone(grid), metadata: clone(metadata) };
@@ -128,6 +142,21 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
         shouldLoseResponse = false;
         throw new Error('response lost after commit');
       }
+      if (options.responseRanges) {
+        assert.equal(options.responseRanges.length, 1);
+        const match = options.responseRanges[0].match(/!A(\d+):M(\d+)$/);
+        assert.ok(match && match[1] === match[2]);
+        const row = Number(match[1]) - 1;
+        if (shouldFailReadback) {
+          shouldFailReadback = false;
+          return { spreadsheetId: id, replies: [] };
+        }
+        return { spreadsheetId: id, updatedSpreadsheet: {
+          spreadsheetId: id, developerMetadata: clone(metadata),
+          sheets: [{ properties: { sheetId: SHEET_ID, title: SHEET_TITLE, gridProperties: { rowCount: grid.length, columnCount: 26 } },
+            data: [{ startRow: row, rowData: [{ values: grid[row].slice(0, 13).map(value => ({ effectiveValue: typeof value === 'number' ? { numberValue: value } : { stringValue: value } })) }] }] }],
+        } };
+      }
       return { spreadsheetId: id, replies: [] };
     },
   };
@@ -137,6 +166,22 @@ const storeFor = (client, spreadsheetId = TEST_SPREADSHEET_ID) => createOrderSto
 
 test('rejects unvalidated targets and never accepts arbitrary spreadsheet IDs', () => {
   assert.throws(() => createOrderStore({ client: {}, spreadsheetId: 'attacker-sheet' }), /SERVICE_UNAVAILABLE/);
+});
+
+test('normal create edit delete use four Sheets calls and a bounded write response', async () => {
+  const client = createFakeClient({ rows: [rawValues(order('old'), ID).concat(52000)] });
+  const store = storeFor(client);
+  const original = (await store.list())[0];
+  for (const perform of [
+    () => store.create(order('new'), 'four-create'),
+    () => store.update(ID, order('edited'), original.revision, 'four-update'),
+    async () => { const target = (await store.list()).find(o => o.id === ID); client.calls.length = 0; return store.remove(ID, target.revision, 'four-delete'); },
+  ]) {
+    client.calls.length = 0;
+    await perform();
+    assert.deepEqual(client.calls, ['getSpreadsheet', 'batchUpdate', 'getSpreadsheet', 'batchUpdate']);
+  }
+  assert.equal(client.state.grid[1][12], 52000);
 });
 
 test('creates after the last A:L order, ignores blank holes, and never writes M or other columns', async () => {
@@ -196,10 +241,10 @@ test('a stale pre-lock read cannot replay the same intent as a second create', a
   let firstFinished;
   const done = new Promise(resolve => { firstFinished = resolve; });
   let acquisitions = 0;
-  client.batchUpdate = async (id, requests) => {
+  client.batchUpdate = async (id, requests, options) => {
     const isAcquire = requests.some(r => r.createDeveloperMetadata?.developerMetadata.metadataId === LOCK_METADATA_ID);
     if (isAcquire && ++acquisitions === 2) await done;
-    const result = await realBatch(id, requests);
+    const result = await realBatch(id, requests, options);
     if (requests.some(r => r.updateCells)) firstFinished();
     return result;
   };
@@ -265,6 +310,37 @@ test('replays delete with the same string ID contract after a lost response', as
   const mutationBatchCount = client.batches.filter(batch => batch.some(request => request.updateCells)).length;
   assert.equal(await store.remove(ID, current[0].revision, 'req-delete-retry'), ID);
   assert.equal(client.batches.filter(batch => batch.some(request => request.updateCells)).length, mutationBatchCount);
+});
+
+test('a confirmed commit whose row later changes never becomes a definitive not-written conflict', async () => {
+  const client = createFakeClient({ responseLost: true });
+  const store = storeFor(client);
+  await assert.rejects(store.create(order('first'), 'lost-create'), e => e.code === 'SERVICE_UNAVAILABLE');
+  const saved = (await store.list())[0];
+  await store.update(saved.id, order('changed-later'), saved.revision, 'later-update');
+  const count = client.batches.length;
+  await assert.rejects(store.create(order('first'), 'lost-create'), e => e.code === 'WRITE_PENDING');
+  assert.equal(client.batches.length, count);
+  assert.equal((await store.list()).length, 1);
+});
+
+test('malformed or contradictory commit evidence never reports success or repeats a business write', async () => {
+  for (const corrupt of [
+    result => { delete result.updatedSpreadsheet.sheets[0].data; },
+    result => { result.updatedSpreadsheet.sheets[0].data[0].rowData[0].values[11].effectiveValue.stringValue = ID_2; },
+    result => { result.updatedSpreadsheet.developerMetadata[0].metadataValue = result.updatedSpreadsheet.developerMetadata[0].metadataValue.replace(/"requestHash":"[a-f0-9]+"/, `"requestHash":"${'f'.repeat(64)}"`); },
+    (result, client) => { result.updatedSpreadsheet.developerMetadata.push(clone(client.batches[0][0].createDeveloperMetadata.developerMetadata)); },
+  ]) {
+    const client = createFakeClient();
+    const original = client.batchUpdate;
+    client.batchUpdate = async (...args) => {
+      const result = await original(...args);
+      if (result.updatedSpreadsheet) corrupt(result, client);
+      return result;
+    };
+    await assert.rejects(storeFor(client).create(order('uncertain'), 'uncertain-create'), e => e.code === 'SERVICE_UNAVAILABLE');
+    assert.equal(client.batches.filter(batch => batch.some(r => r.updateCells)).length, 1);
+  }
 });
 
 test('list refuses missing IDs instead of silently backfilling them', async () => {

@@ -1,5 +1,6 @@
 import { OrderServerError } from './orderAuth.js';
 import { planOrderIds } from './orderIds.js';
+import { decodeOrderGrid } from './orderSnapshot.js';
 import {
   OrderModelError,
   computeOrderRevision,
@@ -20,6 +21,7 @@ const TARGETS = new Map([
 ]);
 const MAX_ROWS = 20_000;
 const METADATA_FIELDS = 'spreadsheetId,developerMetadata,sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)))';
+const GRID_FIELDS = 'spreadsheetId,developerMetadata,sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),data(startRow,startColumn,rowData(values(effectiveValue,userEnteredValue(formulaValue)))))';
 const HASH = /^[a-f0-9]{64}$/;
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,200}$/;
 const ID = /^ord_[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -70,13 +72,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
   if ((sheetTitle !== undefined && sheetTitle !== expectedTitle)
     || (sheetId !== undefined && (!Number.isSafeInteger(sheetId) || sheetId < 0))) fail('SERVICE_UNAVAILABLE');
 
-  const readMetadata = async (minimumColumns = 13) => {
-    let metadata;
-    try {
-      metadata = await client.getSpreadsheet(spreadsheetId, METADATA_FIELDS);
-    } catch (error) {
-      mapExternalError(error);
-    }
+  const validateMetadata = (metadata, minimumColumns = 13) => {
     if (metadata?.spreadsheetId && metadata.spreadsheetId !== spreadsheetId) fail('SERVICE_UNAVAILABLE');
     const matches = (metadata?.sheets || []).filter(item => item?.properties?.title === expectedTitle);
     if (matches.length !== 1) fail('SERVICE_UNAVAILABLE');
@@ -86,6 +82,32 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       || sheet.gridProperties.rowCount < 2 || sheet.gridProperties.rowCount > MAX_ROWS
       || sheet.gridProperties.columnCount < minimumColumns) fail('SERVICE_UNAVAILABLE');
     return { metadata, sheet };
+  };
+
+  const readMetadata = async (minimumColumns = 13) => {
+    try {
+      return validateMetadata(await client.getSpreadsheet(spreadsheetId, METADATA_FIELDS), minimumColumns);
+    } catch (error) {
+      mapExternalError(error);
+    }
+  };
+
+  const gridSnapshot = (metadata, startRow, endRow, requireAnchor = false) => {
+    const state = validateMetadata(metadata);
+    const target = metadata.sheets.find(item => item.properties.sheetId === state.sheet.sheetId);
+    return { ...state, ...decodeOrderGrid(target, { startRow, endRow, requireAnchor }) };
+  };
+
+  const readBeforeWrite = async state => {
+    const endRow = state.sheet.gridProperties.rowCount;
+    try {
+      const metadata = await client.getSpreadsheet(spreadsheetId, GRID_FIELDS, { ranges: [`'${expectedTitle}'!A1:M${endRow}`] });
+      const snapshot = gridSnapshot(metadata, 0, endRow);
+      if (snapshot.sheet.gridProperties.rowCount !== endRow || snapshot.values[0][11] !== HEADER_ID) fail('CONFLICT', 409);
+      return snapshot;
+    } catch (error) {
+      mapExternalError(error);
+    }
   };
 
   const readSnapshot = async () => {
@@ -162,9 +184,9 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     return matches[0]?.record;
   };
 
-  const callBatch = async requests => {
+  const callBatch = async (requests, options) => {
     try {
-      return await client.batchUpdate(spreadsheetId, requests);
+      return await client.batchUpdate(spreadsheetId, requests, options);
     } catch (error) {
       mapExternalError(error);
     }
@@ -259,18 +281,18 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
 
   const replay = async (record, kind, orderId) => {
     const snapshot = await readSnapshot();
-    if (record.kindHash !== await hashText(kind)) fail('CONFLICT', 409);
+    if (record.kindHash !== await hashText(kind)) fail('WRITE_PENDING', 409);
     if (kind === 'delete') {
-      if (findRowsById(snapshot.values, orderId).length) fail('CONFLICT', 409);
+      if (findRowsById(snapshot.values, orderId).length) fail('WRITE_PENDING', 409);
       return orderId;
     }
     const matching = [];
     for (let index = 1; index < snapshot.values.length; index += 1) {
       if (await hashText(snapshot.values[index][11]) === record.orderIdHash) matching.push(index);
     }
-    if (matching.length !== 1) fail('CONFLICT', 409);
+    if (matching.length !== 1) fail('WRITE_PENDING', 409);
     const parsed = await parseOrderRow(snapshot.values[matching[0]]);
-    if (await hashText(parsed.revision) !== record.revisionHash) fail('CONFLICT', 409);
+    if (await hashText(parsed.revision) !== record.revisionHash) fail('WRITE_PENDING', 409);
     return parsed;
   };
 
@@ -304,7 +326,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     const owner = await acquireLock(metadataState.metadata);
     let mutationSent = false;
     try {
-      const snapshot = await readSnapshot();
+      const snapshot = await readBeforeWrite(metadataState);
       assertOwnedLock(snapshot.metadata, owner);
       // Another attempt may have committed between the first read and acquiring the lock.
       const completedWhileWaiting = await findCompletion(snapshot.metadata, requestId, kind, orderId, expectedRevision, validOrder);
@@ -318,7 +340,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       let cells;
       let revision;
       if (kind === 'create') {
-        const occupied = snapshot.values.map((row, index) => row.slice(0, 12).some(hasValue) ? index : -1).filter(index => index > 0);
+        const occupied = [...snapshot.occupiedRows].filter(index => index > 0);
         rowIndex = (occupied.length ? Math.max(...occupied) + 1 : 1);
         if (rowIndex >= snapshot.values.length) fail('CONFLICT', 409);
         id = `ord_${globalThis.crypto.randomUUID()}`;
@@ -352,22 +374,26 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
         },
       };
       mutationSent = true;
-      await callBatch([
+      const committed = await callBatch([
         updateCells(rowIndex, cells, snapshot.sheet.sheetId),
         ...dateFormatRequests(rowIndex, snapshot.sheet.sheetId),
         completion,
         deleteLockRequest(owner),
-      ]);
-      const after = await readSnapshot();
-      if (recordsFrom(after.metadata).every(item => item.record.requestIdHash !== record.requestIdHash)) fail('SERVICE_UNAVAILABLE');
+      ], {
+        responseRanges: [`'${expectedTitle}'!A${rowIndex + 1}:M${rowIndex + 1}`],
+        fields: `spreadsheetId,updatedSpreadsheet(${GRID_FIELDS})`,
+      });
+      if (committed?.spreadsheetId && committed.spreadsheetId !== spreadsheetId) fail('SERVICE_UNAVAILABLE');
+      const after = gridSnapshot(committed?.updatedSpreadsheet, rowIndex, rowIndex + 1, true);
+      const confirmations = recordsFrom(after.metadata).filter(item => item.record.requestIdHash === record.requestIdHash);
+      if (confirmations.length !== 1 || Object.keys(record).some(key => confirmations[0].record[key] !== record[key])) fail('SERVICE_UNAVAILABLE');
       if ((after.metadata.developerMetadata || []).some(item => item.metadataId === LOCK_METADATA_ID && item.metadataValue === owner)) fail('SERVICE_UNAVAILABLE');
       if (kind === 'delete') {
-        if (findRowsById(after.values, id).length) fail('SERVICE_UNAVAILABLE');
+        if (after.values[0].slice(0, 12).some(hasValue)) fail('SERVICE_UNAVAILABLE');
         return id;
       }
-      const rows = findRowsById(after.values, id);
-      if (rows.length !== 1) fail('SERVICE_UNAVAILABLE');
-      const parsed = await parseOrderRow(after.values[rows[0]]);
+      if (after.values[0][11] !== id) fail('SERVICE_UNAVAILABLE');
+      const parsed = await parseOrderRow(after.values[0]);
       if (parsed.revision !== revision) fail('SERVICE_UNAVAILABLE');
       return parsed;
     } catch (error) {
