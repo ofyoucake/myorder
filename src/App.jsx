@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import ConnectionTestPage from './pages/ConnectionTestPage';
 import { supabase } from './supabaseClient';
 import './index.css';
 
@@ -43,7 +44,11 @@ function App() {
   return (
     <div className="app-container">
       {session ? (
-        <DashboardPage session={session} onLogout={() => supabase.auth.signOut()} />
+        window.location.pathname === '/connection-test' ? (
+          <ConnectionTestPage session={session} />
+        ) : (
+          <DashboardPage session={session} onLogout={() => supabase.auth.signOut()} />
+        )
       ) : (
         <LoginPage />
       )}
