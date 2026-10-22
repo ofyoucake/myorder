@@ -140,3 +140,17 @@ test('only a verified owner receives safe Google configuration diagnostics', asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test('isolated tests compare a full reservation fingerprint including L-column IDs', async () => {
+  const values = [[], ['[테스트 전용·제작 금지]', '', '', '', '', '', '', '', '', '', '', 'old-id']];
+  const client = {
+    getSpreadsheet: async () => ({ sheets: [{ properties: { title: '주문정보', gridProperties: { rowCount: 3 } } }] }),
+    getValues: async () => ({ values }),
+  };
+  const before = await inspectOrderConnection(client, 'production-sheet', { includeIdFingerprint: true });
+  values[1][11] = 'changed-id';
+  const after = await inspectOrderConnection(client, 'production-sheet', { includeIdFingerprint: true });
+  assert.equal(before.fingerprint, after.fingerprint);
+  assert.equal(typeof before.completeFingerprint, 'string');
+  assert.notEqual(before.completeFingerprint, after.completeFingerprint);
+});

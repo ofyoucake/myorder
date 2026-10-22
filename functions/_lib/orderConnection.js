@@ -2,8 +2,12 @@ import { OrderServerError } from './orderAuth.js';
 
 const ID = /^ord_[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const text = value => String(value ?? '');
+const fingerprintValues = async values => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(values)));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+};
 
-export async function inspectOrderConnection(client, spreadsheetId) {
+export async function inspectOrderConnection(client, spreadsheetId, { includeIdFingerprint = false } = {}) {
   const metadata = await client.getSpreadsheet(spreadsheetId, 'properties(timeZone),sheets(properties(sheetId,title,gridProperties(rowCount)))');
   const sheet = metadata?.sheets?.find(item => item?.properties?.title === '주문정보')?.properties;
   const rowCount = sheet?.gridProperties?.rowCount;
@@ -37,11 +41,13 @@ export async function inspectOrderConnection(client, spreadsheetId) {
   // Include all other cells/formulas, even in rows containing only M:W data.
   const protectedValues = Array.from({ length: rowCount }, (_, index) =>
     Array.from({ length: 23 }, (_, column) => column === 11 ? '' : text(values[index]?.[column])));
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(protectedValues)));
   return {
     connected: true, readOnly: true, timeZone: metadata?.properties?.timeZone || '',
     orderCount, lastOrderRow, missingIdCount, duplicateIdCount, existingLegacyLValueCount,
     idHeaderReady: text(values[0]?.[11]) === 'ID',
-    fingerprint: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''),
+    fingerprint: await fingerprintValues(protectedValues),
+    ...(includeIdFingerprint ? { completeFingerprint: await fingerprintValues(
+      Array.from({ length: rowCount }, (_, index) => Array.from({ length: 23 }, (_, column) => text(values[index]?.[column]))),
+    ) } : {}),
   };
 }

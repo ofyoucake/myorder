@@ -1,13 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import './ConnectionTestPage.css';
-
 const ERROR_COPY = {
   AUTH_REQUIRED: '로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.',
   FORBIDDEN: '읽기 전용 연결 확인 권한이 없습니다.',
   SERVICE_UNAVAILABLE: '연결 확인 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해주세요.',
 };
-
 const DIAGNOSTIC_COPY = {
   CONFIG_INVALID: '등록된 서비스 계정 JSON의 형식 또는 계정이 설정과 다릅니다.',
   TOKEN_EXCHANGE_FAILED: '구글 서비스 계정 인증이 거부되었습니다.',
@@ -28,15 +26,12 @@ const DIAGNOSTIC_COPY = {
   SPREADSHEET_NOT_ALLOWED: '시트 ID가 서버 허용 목록과 일치하지 않습니다.',
   NETWORK_ERROR: '서버에서 구글에 연결하지 못했습니다.',
 };
-
 const getErrorCode = (status, code) => {
   if (status === 401 || code === 'AUTH_REQUIRED') return 'AUTH_REQUIRED';
   if (status === 403 || code === 'FORBIDDEN') return 'FORBIDDEN';
   return 'SERVICE_UNAVAILABLE';
 };
-
 const isNonNegativeNumber = (value) => Number.isFinite(value) && value >= 0;
-
 const isValidConnectionResult = (value) => {
   if (!value || typeof value !== 'object') return false;
 
@@ -53,18 +48,39 @@ const isValidConnectionResult = (value) => {
     (value.fingerprint === undefined || value.fingerprint === null || typeof value.fingerprint === 'string')
   );
 };
-
+const TEST_ERROR_COPY = {
+  AUTH_REQUIRED: '로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.',
+  FORBIDDEN: '실제 쓰기 검증이 잠겨 있거나 권한이 없습니다.',
+  SERVICE_UNAVAILABLE: '쓰기 검증 결과를 확인할 수 없습니다. 테스트 전용 문서의 정리 상태를 확인하기 전에는 다시 시도하지 마세요.',
+};
+const isValidIsolatedTestResult = (value) => (
+  value &&
+  typeof value === 'object' &&
+  typeof value.passed === 'boolean' &&
+  typeof value.cleanedUp === 'boolean' &&
+  Array.isArray(value.checks) &&
+  value.checks.every((check) => typeof check === 'string') &&
+  typeof value.productionUnchanged === 'boolean' &&
+  isNonNegativeNumber(value.productionOrderCount)
+);
 export default function ConnectionTestPage({ session }) {
   const [status, setStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [errorCode, setErrorCode] = useState('');
   const [diagnosticCode, setDiagnosticCode] = useState('');
-
+  const [testStatus, setTestStatus] = useState('idle');
+  const [testResult, setTestResult] = useState(null);
+  const [testErrorCode, setTestErrorCode] = useState('');
+  const testBusyRef = useRef(false);
   const handleConnectionTest = async () => {
+    if (testBusyRef.current) return;
     setStatus('loading');
     setResult(null);
     setErrorCode('');
     setDiagnosticCode('');
+    setTestStatus('idle');
+    setTestResult(null);
+    setTestErrorCode('');
 
     try {
       const { data, error: sessionError } = await supabase.auth.getSession();
@@ -112,9 +128,66 @@ export default function ConnectionTestPage({ session }) {
     }
   };
 
-  const isLoading = status === 'loading';
-  const errorMessage = errorCode ? ERROR_COPY[errorCode] : '';
+  const handleIsolatedTest = async () => {
+    if (testBusyRef.current || status !== 'success') return;
+    testBusyRef.current = true;
+    setTestStatus('loading');
+    setTestResult(null);
+    setTestErrorCode('');
 
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      const currentSession = data?.session;
+
+      if (
+        sessionError ||
+        !currentSession?.access_token ||
+        (session?.user?.id && currentSession.user?.id !== session.user.id)
+      ) {
+        setTestErrorCode('AUTH_REQUIRED');
+        setTestStatus('error');
+        return;
+      }
+
+      const response = await fetch('/api/orders/isolated-test', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${currentSession.access_token}`,
+        },
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setTestErrorCode(getErrorCode(response.status, payload?.error?.code || payload?.code));
+        setTestStatus('error');
+        return;
+      }
+
+      if (!isValidIsolatedTestResult(payload)) {
+        setTestErrorCode('SERVICE_UNAVAILABLE');
+        setTestStatus('error');
+        return;
+      }
+
+      setTestResult(payload);
+      setTestStatus(payload.passed && payload.cleanedUp && payload.productionUnchanged ? 'success' : 'warning');
+    } catch {
+      setTestErrorCode('SERVICE_UNAVAILABLE');
+      setTestStatus('error');
+    } finally {
+      testBusyRef.current = false;
+    }
+  };
+
+  const isLoading = status === 'loading';
+  const testBusy = testStatus === 'loading';
+  const errorMessage = errorCode ? ERROR_COPY[errorCode] : '';
+  const testErrorMessage = testErrorCode ? TEST_ERROR_COPY[testErrorCode] : '';
+  const preventNavigationDuringTest = (event) => {
+    if (testBusy) event.preventDefault();
+  };
   return (
     <main className="connection-test-page">
       <section className="connection-test-card" aria-labelledby="connection-test-title">
@@ -123,17 +196,17 @@ export default function ConnectionTestPage({ session }) {
             <p className="connection-test-kicker">운영 점검</p>
             <h1 id="connection-test-title">주문 연결 확인</h1>
             <p className="connection-test-description">
-              운영 주문 연결 상태만 확인합니다. 이 화면에서는 예약 데이터를 변경하거나 추가하지 않습니다.
+              운영 예약은 읽기 전용으로만 확인합니다. 쓰기 검증은 별도 [테스트 전용·제작 금지] 문서에서만 테스트 데이터를 등록·수정·삭제하고 정리합니다.
             </p>
           </div>
-          <span className="connection-test-badge">READ ONLY</span>
+          <span className="connection-test-badge">운영 READ ONLY</span>
         </div>
 
         <div className="connection-test-notice" role="note">
           <span className="connection-test-notice-mark" aria-hidden="true">✓</span>
           <div>
             <strong>안전한 점검 모드</strong>
-            <p>인증된 세션으로 읽기 전용 연결만 확인하며, 토큰과 원문 서버 오류는 화면에 표시하지 않습니다.</p>
+              <p>운영 시트에는 쓰지 않습니다. 별도 [테스트 전용·제작 금지] 문서의 쓰기 검증에서만 테스트 데이터를 사용하며, 토큰과 원문 서버 오류는 화면에 표시하지 않습니다.</p>
           </div>
         </div>
 
@@ -142,12 +215,20 @@ export default function ConnectionTestPage({ session }) {
             className="connection-test-button"
             type="button"
             onClick={handleConnectionTest}
-            disabled={isLoading}
+            disabled={isLoading || testBusy}
             aria-busy={isLoading}
           >
             {isLoading ? '연결 확인 중...' : '읽기 전용 연결 확인'}
           </button>
-          <a className="connection-test-back" href="/">대시보드로 돌아가기</a>
+          <a
+            className="connection-test-back"
+            href={testBusy ? undefined : '/'}
+            aria-disabled={testBusy}
+            tabIndex={testBusy ? -1 : undefined}
+            onClick={preventNavigationDuringTest}
+          >
+            {testBusy ? '쓰기 검증 진행 중...' : '대시보드로 돌아가기'}
+          </a>
         </div>
 
         <div className="connection-test-output" aria-live="polite">
@@ -184,7 +265,7 @@ export default function ConnectionTestPage({ session }) {
               </div>
 
               <p className="connection-test-summary">
-                운영 시트: 읽기 전용 / 예약 변경 없음 / 테스트 예약 추가 없음
+                운영 시트: 읽기 전용 / 운영 예약 변경 없음 / 쓰기 검증은 별도 테스트 문서에서만 수행
               </p>
 
               <dl className="connection-test-metrics">
@@ -218,6 +299,56 @@ export default function ConnectionTestPage({ session }) {
                 <p className="connection-test-fingerprint" title={result.fingerprint}>
                   fingerprint <span>{result.fingerprint}</span>
                 </p>
+              )}
+
+              <div className="connection-test-notice connection-test-isolated" role="note">
+                <div>
+                  <p>
+                  운영 예약은 읽기 전용으로 보호합니다. 별도 [테스트 전용·제작 금지] 문서에서만 테스트 데이터의 등록·수정·삭제를 실제로 검증하고 정리합니다.
+                  </p>
+                  <button
+                    className="connection-test-button"
+                    type="button"
+                    onClick={handleIsolatedTest}
+                    disabled={isLoading || testBusy}
+                    aria-busy={testBusy}
+                    style={{ background: 'var(--bg-card)', color: 'var(--point-dark)', borderColor: 'var(--point-light)', boxShadow: 'none' }}
+                  >
+                    {testBusy ? '쓰기 검증 중...' : '테스트 전용 시트에서 쓰기 검증'}
+                  </button>
+                </div>
+              </div>
+
+              {testStatus === 'loading' && (
+                <div className="connection-test-loading" role="status">
+                  <span className="connection-test-spinner" aria-hidden="true" />
+                  <p>테스트 전용 문서의 등록·수정·삭제를 검증하고 있습니다.</p>
+                </div>
+              )}
+
+              {testStatus === 'error' && (
+                <div className="connection-test-error" role="alert">
+                  <span className="connection-test-error-code">{testErrorCode}</span>
+                  <p>{testErrorMessage}</p>
+                </div>
+              )}
+
+              {testStatus === 'success' && testResult && (
+                <div className="connection-test-success" role="status">
+                  <p className="connection-test-summary">검증 통과 / 테스트 데이터 정리 완료 / 운영 주문 {testResult.productionOrderCount.toLocaleString()}건 변경 없음</p>
+                </div>
+              )}
+
+              {testStatus === 'warning' && testResult && (
+                <div className="connection-test-error" role="alert">
+                  <span className="connection-test-error-code">{testResult.productionUnchanged ? 'TEST_VALIDATION_FAILED' : 'PRODUCTION_UNCHANGED_FALSE'}</span>
+                  <p>
+                    {testResult.productionUnchanged
+                      ? `쓰기 검증이 완료 기준을 충족하지 않았습니다. 운영 주문 ${testResult.productionOrderCount.toLocaleString()}건 변경 없음.`
+                      : '운영 주문 변경 감지가 독립 실패로 판정되었습니다. 즉시 점검을 중단해주세요.'}
+                    {' 테스트 전용 문서의 정리 상태를 확인하기 전에는 다시 시도하지 마세요.'}
+                  </p>
+                </div>
               )}
             </div>
           )}

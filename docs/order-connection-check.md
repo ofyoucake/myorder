@@ -1,6 +1,6 @@
 # Read-only Google Sheets connection check
 
-This slice adds `/connection-test` and `GET /api/orders/connection` only.
+The initial slice adds `/connection-test` and `GET /api/orders/connection`.
 It does not enable order creation, editing, deletion, or L-column migration.
 The normal dashboard continues using its existing code and data source.
 
@@ -32,6 +32,25 @@ Do not treat a successful read-only check as validation of write permissions or 
 Live write tests must use a separate spreadsheet clearly named `[테스트 전용·제작 금지]`,
 with only synthetic data and a server-enforced target different from the production spreadsheet.
 Never use an operational reservation to test editing or deletion.
+
+## Isolated write verification
+
+`POST /api/orders/isolated-test` is owner-only, requires the exact same Origin,
+rejects any request body or query parameters, and is disabled unless
+`ORDER_ISOLATED_TESTS_ENABLED=true`. Its write client can address only the fixed
+private document `[테스트 전용·제작 금지] MyOrder 연동 검증 2026-10-22`.
+The production client remains read-only and compares the complete A:W fingerprint,
+including L, before and after the run. No production reservation is a test fixture.
+
+An explicit unique developer-metadata ID serializes isolated runs across Workers
+instances. Each run has a fresh owner nonce; cleanup releases only that owner's
+lock. Unknown write outcomes keep the lock fail-closed rather than allowing a
+second run. Do not retry an uncertain run before checking its clearly labelled
+test document. Successful runs verify spacing, line breaks, a middle blank row,
+append-after-last-order, pickup sorting, ID-targeted editing, A:L clearing and
+preservation of a test-only M formula. They restore the initial cells and timezone.
+This verifies real API primitives, not the as-yet-disabled product CRUD routes.
+Disable the temporary server test flag after all live isolated tests finish.
 
 ## Rollback
 

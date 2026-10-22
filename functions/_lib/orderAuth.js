@@ -50,7 +50,11 @@ export function serverJson(body, status = 200) {
 
 export function serverError(error) {
   // Never send upstream response bodies, key material, tokens or stack traces.
-  const allowed = ['AUTH_REQUIRED', 'FORBIDDEN', 'SERVICE_UNAVAILABLE', 'METHOD_NOT_ALLOWED', 'VALIDATION_ERROR'];
-  const code = allowed.includes(error?.code) ? error.code : 'SERVICE_UNAVAILABLE';
-  return serverJson({ error: { code } }, error instanceof OrderServerError ? error.status : 503);
+  const statuses = {
+    AUTH_REQUIRED: 401, FORBIDDEN: 403, SERVICE_UNAVAILABLE: 503,
+    METHOD_NOT_ALLOWED: 405, VALIDATION_ERROR: 422, CONFLICT: 409,
+    NOT_FOUND: 404, ORDER_NOT_READY: 409, RATE_LIMITED: 429, WRITE_PENDING: 409,
+  };
+  const code = Object.hasOwn(statuses, error?.code) ? error.code : 'SERVICE_UNAVAILABLE';
+  return serverJson({ error: { code } }, statuses[code]);
 }
