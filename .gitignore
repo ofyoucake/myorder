@@ -12,6 +12,16 @@ dist
 dist-ssr
 *.local
 
+# Server secrets and private local verification output
+.env*
+!.env.example
+.dev.vars*
+*.pem
+*.key
+*service-account*.json
+.wrangler/
+artifacts/private/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
