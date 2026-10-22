@@ -82,7 +82,7 @@ test('exchanges a signed RS256 JWT and reads an allowlisted spreadsheet', async 
 
   const tokenRequest = harness.requests[0];
   assert.equal(tokenRequest.url.href, 'https://oauth2.googleapis.com/token');
-  assert.equal(tokenRequest.init.redirect, 'error');
+  assert.equal(tokenRequest.init.redirect, 'manual');
   const tokenBody = new URLSearchParams(tokenRequest.init.body);
   assert.equal(tokenBody.get('grant_type'), 'urn:ietf:params:oauth:grant-type:jwt-bearer');
 
@@ -106,7 +106,7 @@ test('exchanges a signed RS256 JWT and reads an allowlisted spreadsheet', async 
   const sheetsRequest = harness.requests[1];
   assert.equal(sheetsRequest.url.origin, 'https://sheets.googleapis.com');
   assert.equal(sheetsRequest.url.pathname, `/v4/spreadsheets/${MAIN_SPREADSHEET_ID}`);
-  assert.equal(sheetsRequest.init.redirect, 'error');
+  assert.equal(sheetsRequest.init.redirect, 'manual');
   assert.equal(sheetsRequest.url.searchParams.get('fields'), 'spreadsheetId,properties(title)');
   assert.equal(sheetsRequest.init.headers.Authorization, 'Bearer test-token');
 });

@@ -12,6 +12,8 @@ The normal dashboard continues using its existing code and data source.
 
 The Google client validates the configured service-account identity, fixes the Google
 endpoints, limits spreadsheet IDs/ranges, and requests the read-only Google OAuth scope.
+All server fetches use `redirect: 'manual'` and reject non-2xx results. Workers does
+not support `redirect: 'error'`; Node-only fetch mocks do not establish Workers compatibility.
 The probe ignores editable profile URLs and rejects query-string target overrides.
 All mutation HTTP methods are rejected. No reservation values or credentials are returned.
 

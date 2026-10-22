@@ -24,7 +24,7 @@ test('only the server-verified confirmed owner is authorized', async () => {
   }
   const user = await authorizeOrderAdmin(request, env, async (url, options) => {
     assert.equal(url, 'https://example.supabase.co/auth/v1/user');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     return json({ id: 'owner', email: env.ORDER_ADMIN_EMAIL, email_confirmed_at: '2026-01-01' });
   });
   assert.equal(user.id, 'owner');
@@ -84,6 +84,14 @@ test('production connection route rejects every mutation method without credenti
 test('Supabase outages are not incorrectly reported as expired logins', async () => {
   await assert.rejects(authorizeOrderAdmin(request, env, async () => new Response('', { status: 503 })), e => e.code === 'SERVICE_UNAVAILABLE');
   await assert.rejects(authorizeOrderAdmin(request, env, async () => new Response('', { status: 403 })), e => e.code === 'FORBIDDEN');
+});
+
+test('Cloudflare-compatible redirect handling rejects upstream redirects without following them', async () => {
+  await assert.rejects(authorizeOrderAdmin(request, env, async (_url, options) => {
+    if (options.redirect === 'error') throw new TypeError('Workers does not support error redirect mode');
+    assert.equal(options.redirect, 'manual');
+    return new Response('', { status: 302, headers: { Location: 'https://untrusted.example/' } });
+  }), e => e.code === 'SERVICE_UNAVAILABLE');
 });
 
 test('production handler verifies the owner then performs only read-only Google requests', async () => {

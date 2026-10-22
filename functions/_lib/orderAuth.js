@@ -24,7 +24,7 @@ export async function authorizeOrderAdmin(request, env, fetchImpl = fetch) {
   try {
     response = await fetchImpl(`${url.replace(/\/$/, '')}/auth/v1/user`, {
       headers: { Authorization: authorization, apikey: key },
-      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10000),
+      cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(10000),
     });
     if (response.status === 401) throw new OrderServerError('AUTH_REQUIRED', 401);
     if (response.status === 403) throw new OrderServerError('FORBIDDEN', 403);

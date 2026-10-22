@@ -229,7 +229,7 @@ const fetchWithTimeout = async (fetchImpl, url, init, timeoutMs, consume = respo
   try {
     const response = await fetchImpl(url, {
       ...init,
-      redirect: 'error',
+      redirect: 'manual',
       signal: controller.signal,
     });
     return await consume(response);
