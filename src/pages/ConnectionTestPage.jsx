@@ -8,6 +8,17 @@ const ERROR_COPY = {
   SERVICE_UNAVAILABLE: '연결 확인 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해주세요.',
 };
 
+const DIAGNOSTIC_COPY = {
+  CONFIG_INVALID: '등록된 서비스 계정 JSON의 형식 또는 계정이 설정과 다릅니다.',
+  TOKEN_EXCHANGE_FAILED: '구글 서비스 계정 인증이 거부되었습니다.',
+  SHEETS_FORBIDDEN: '서비스 계정의 시트 접근 권한 또는 Sheets API 설정을 확인해야 합니다.',
+  SHEETS_NOT_FOUND: '설정된 운영 스프레드시트를 찾을 수 없습니다.',
+  RANGE_NOT_ALLOWED: '시트 조회 범위가 안전 제한과 맞지 않습니다.',
+  FIELDS_NOT_ALLOWED: '시트 조회 항목이 안전 제한과 맞지 않습니다.',
+  RESPONSE_TOO_LARGE: '시트 응답이 안전 크기 제한을 초과했습니다.',
+  TIMEOUT: '구글 응답 대기 시간이 초과되었습니다.',
+};
+
 const getErrorCode = (status, code) => {
   if (status === 401 || code === 'AUTH_REQUIRED') return 'AUTH_REQUIRED';
   if (status === 403 || code === 'FORBIDDEN') return 'FORBIDDEN';
@@ -37,11 +48,13 @@ export default function ConnectionTestPage({ session }) {
   const [status, setStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [errorCode, setErrorCode] = useState('');
+  const [diagnosticCode, setDiagnosticCode] = useState('');
 
   const handleConnectionTest = async () => {
     setStatus('loading');
     setResult(null);
     setErrorCode('');
+    setDiagnosticCode('');
 
     try {
       const { data, error: sessionError } = await supabase.auth.getSession();
@@ -69,7 +82,8 @@ export default function ConnectionTestPage({ session }) {
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setErrorCode(getErrorCode(response.status, payload?.code));
+        setErrorCode(getErrorCode(response.status, payload?.error?.code));
+        if (Object.hasOwn(DIAGNOSTIC_COPY, payload?.error?.diagnosticCode)) setDiagnosticCode(payload.error.diagnosticCode);
         setStatus('error');
         return;
       }
@@ -145,6 +159,7 @@ export default function ConnectionTestPage({ session }) {
             <div className="connection-test-error" role="alert">
               <span className="connection-test-error-code">{errorCode}</span>
               <p>{errorMessage}</p>
+              {diagnosticCode && <p>{diagnosticCode}: {DIAGNOSTIC_COPY[diagnosticCode]}</p>}
             </div>
           )}
 

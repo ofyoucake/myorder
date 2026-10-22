@@ -118,3 +118,17 @@ test('production handler verifies the owner then performs only read-only Google 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('only a verified owner receives safe Google configuration diagnostics', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => json({ id: 'owner', email: env.ORDER_ADMIN_EMAIL, email_confirmed_at: '2026-01-01' });
+    const response = await onRequest({ request, env: { ...env, GOOGLE_SERVICE_ACCOUNT_JSON: 'invalid-private-secret' } });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: { code: 'SERVICE_UNAVAILABLE', diagnosticCode: 'CONFIG_INVALID' } });
+    const rejected = await onRequest({ request: new Request(request.url), env: {} });
+    assert.deepEqual(await rejected.json(), { error: { code: 'AUTH_REQUIRED' } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
