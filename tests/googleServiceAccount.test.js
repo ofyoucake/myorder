@@ -126,13 +126,16 @@ test('reads values with the selected render option and never writes in read-only
   assert.deepEqual(result.values, [['=SUM(A1:A2)']]);
   assert.equal(harness.requests[1].url.searchParams.get('valueRenderOption'), 'FORMULA');
 
+  await client.getValues(MAIN_SPREADSHEET_ID, 'Sheet1!A1:M2', { valueRenderOption: 'UNFORMATTED_VALUE' });
+  assert.equal(harness.requests[2].url.searchParams.get('valueRenderOption'), 'UNFORMATTED_VALUE');
+
   await assert.rejects(
     client.batchUpdate(MAIN_SPREADSHEET_ID, [{ updateCells: {} }]),
     (error) => error instanceof GoogleSheetsError
       && error.code === 'READ_ONLY'
       && error.status === 403,
   );
-  assert.equal(harness.requests.length, 2);
+  assert.equal(harness.requests.length, 3);
 });
 
 test('requires the fixed service account and spreadsheet allowlist', async () => {

@@ -338,7 +338,7 @@ export function createGoogleSheetsClient({
 
     async getValues(spreadsheetId, range, { valueRenderOption = 'FORMATTED_VALUE' } = {}) {
       validateRange(range);
-      if (!['FORMULA', 'FORMATTED_VALUE'].includes(valueRenderOption)) {
+      if (!['FORMULA', 'FORMATTED_VALUE', 'UNFORMATTED_VALUE'].includes(valueRenderOption)) {
         fail('VALUE_RENDER_OPTION_NOT_ALLOWED', 400);
       }
       const url = `${baseUrlFor(spreadsheetId)}/values/${encodeURIComponent(range)}?valueRenderOption=${encodeURIComponent(valueRenderOption)}`;
