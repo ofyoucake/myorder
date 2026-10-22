@@ -1049,7 +1049,7 @@ const DashboardPage = ({ session, onLogout }) => {
             busy={mutationBusy}
             pending={pendingMutation?.kind === 'delete'}
             error={mutationError}
-            onDelete={confirmDelete}
+            onDelete={() => confirmDelete()}
             onRetry={retryPendingMutation}
             onClose={() => {
               if (mutationLock.current || pendingMutation) return;

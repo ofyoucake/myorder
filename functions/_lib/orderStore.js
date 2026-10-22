@@ -217,19 +217,13 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
   const findRowsById = (values, orderId) => values
     .map((row, index) => row[11] === orderId ? index : -1).filter(index => index > 0);
 
-  const validateActiveRows = async values => {
+  const validateActiveRows = values => {
     const seen = new Set();
     for (let index = 1; index < values.length; index += 1) {
       if (!isOrderRow(values[index])) continue;
       const id = values[index][11];
       if (typeof id !== 'string' || !ID.test(id) || seen.has(id.toLowerCase())) fail('CONFLICT', 409);
       seen.add(id.toLowerCase());
-      try {
-        await parseOrderRow(values[index]);
-      } catch (error) {
-        if (error instanceof OrderModelError) fail('CONFLICT', 409);
-        throw error;
-      }
     }
     return seen;
   };
@@ -282,7 +276,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
 
   const list = async () => {
     const snapshot = await readSnapshot();
-    await validateActiveRows(snapshot.values);
+    validateActiveRows(snapshot.values);
     const orders = [];
     for (let index = 1; index < snapshot.values.length; index += 1) {
       if (!isOrderRow(snapshot.values[index])) continue;
@@ -318,7 +312,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
         await releaseLock(owner);
         return replay(completedWhileWaiting, kind, orderId);
       }
-      await validateActiveRows(snapshot.values);
+      validateActiveRows(snapshot.values);
       let rowIndex;
       let id;
       let cells;
