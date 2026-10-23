@@ -129,6 +129,7 @@ export default function OrderFormModal({
   const firstFieldRef = useRef(null);
   const pickupDateRef = useRef(null);
   const pickupTimeRef = useRef(null);
+  const retryRef = useRef(null);
   const busyRef = useRef(busy || pending);
   const onCancelRef = useRef(onCancel);
   const titleId = `order-form-title-${useId().replace(/:/g, '')}`;
@@ -137,6 +138,10 @@ export default function OrderFormModal({
   useEffect(() => {
     busyRef.current = busy || pending;
   }, [busy, pending]);
+
+  useEffect(() => {
+    if (pending && !busy) retryRef.current?.focus();
+  }, [pending, busy]);
 
   useEffect(() => {
     onCancelRef.current = onCancel;
@@ -296,12 +301,13 @@ export default function OrderFormModal({
             )}
             {pending && (
               <button
+                ref={retryRef}
                 className="order-form__button order-form__button--primary"
                 type="button"
                 onClick={onRetry}
                 disabled={busy}
               >
-                처리 결과 다시 확인
+                {busy ? '처리 중...' : '처리 결과 확인'}
               </button>
             )}
           </div>
@@ -444,14 +450,14 @@ export default function OrderFormModal({
 
             <div className="order-form__footer">
               <p className="order-form__required-note"><span aria-hidden="true">*</span> 필수 입력 항목</p>
-              <div className="order-form__actions">
+              {!pending && <div className="order-form__actions">
                 <button className="order-form__button order-form__button--secondary" type="button" onClick={() => onCancel?.()} disabled={busy || pending}>
                   취소
                 </button>
                 <button className="order-form__button order-form__button--primary" type="submit">
                   {busy ? '저장 중...' : pending ? '입력 잠금됨' : initialOrder ? '변경사항 저장' : '주문 등록'}
                 </button>
-              </div>
+              </div>}
             </div>
           </fieldset>
         </form>

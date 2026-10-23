@@ -6,6 +6,12 @@ import { randomUUID } from 'node:crypto';
 
 const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date()).replaceAll('-', '.');
 const fields = ['customer', 'design', 'orderDate', 'pickupDate', 'flavor', 'sheet', 'size', 'cream', 'requests', 'specialNotes', 'orderPath'];
+let writeVersion = 0;
+const receipts = new Map();
+const remember = (requestId, value) => {
+  receipts.set(requestId, value);
+  while (receipts.size > 3) receipts.delete(receipts.keys().next().value);
+};
 let orders = [
   { customer: '[테스트 전용·제작 금지] 김민지', design: '하트 케이크', orderDate: today, pickupDate: `${today} 14:00`, flavor: '초코 산딸기 요거트 코코넛', sheet: '초코 시트', size: 'M size', cream: '생크림', requests: '문구: Happy Birthday\n리본은 연분홍색으로 부탁드립니다.', specialNotes: '픽업 10분 전 연락 예정', orderPath: '카카오톡', price: 0 },
   { customer: '[테스트 전용·제작 금지] 이서연', design: '꽃 케이크', orderDate: today, pickupDate: `${today} 16:30`, flavor: '바닐라 딸기', sheet: '바닐라 시트', size: 'S size', cream: '크림치즈', requests: '', specialNotes: '', orderPath: '인스타그램', price: 0 },
@@ -27,7 +33,7 @@ const orderApiMiddleware = async (req, res) => {
     return respond(200, { assignedCount: 0, orderCount: orders.length, unchangedOtherColumns: true });
   }
 
-  if (req.method === 'GET') return respond(200, { orders });
+  if (req.method === 'GET') return respond(200, { orders, writeVersion });
   try {
     let raw = '';
     for await (const chunk of req) {
@@ -35,20 +41,33 @@ const orderApiMiddleware = async (req, res) => {
       if (raw.length > 100000) return respond(413, {});
     }
     const body = JSON.parse(raw);
+    if (req.method === 'POST' && requestPath === '/confirm') {
+      const receipt = receipts.get(body.requestId);
+      if (receipt) return respond(200, { state: receipt.state, writeVersion });
+      if (body.writeVersion !== writeVersion) return respond(200, { state: 'expired', writeVersion });
+      writeVersion++;
+      remember(body.requestId, { state: 'not_applied' });
+      return respond(200, { state: 'not_applied', writeVersion });
+    }
+    if (body.writeVersion !== writeVersion) return respond(409, { error: { code: 'REQUEST_EXPIRED' } });
     const id = decodeURIComponent(requestPath.slice(1));
     const index = orders.findIndex(order => order.id === id);
     if (req.method !== 'POST' && index < 0) return respond(404, { error: { code: 'NOT_FOUND' } });
     if (req.method !== 'POST' && orders[index].revision !== body.expectedRevision) return respond(409, { error: { code: 'CONFLICT' } });
     if (req.method === 'DELETE') {
       orders = orders.filter(order => order.id !== id);
-      return respond(200, { deletedId: id });
+      writeVersion++;
+      remember(body.requestId, { state: 'completed' });
+      return respond(200, { deletedId: id, writeVersion });
     }
     if (!['POST', 'PATCH'].includes(req.method)) return respond(405, {});
     const input = Object.fromEntries(fields.map(field => [field, String(body.order?.[field] ?? '')]));
     const order = { ...input, id: id || `ord_${randomUUID()}`, revision: randomUUID(), price: 0 };
     if (req.method === 'POST') orders.push(order);
     else orders[index] = order;
-    return respond(200, { order });
+    writeVersion++;
+    remember(body.requestId, { state: 'completed' });
+    return respond(200, { order, writeVersion });
   } catch {
     return respond(422, { error: { code: 'VALIDATION_ERROR' } });
   }

@@ -47,7 +47,7 @@ function App() {
         window.location.pathname === '/connection-test' ? (
           <ConnectionTestPage session={session} />
         ) : (
-          <DashboardPage session={session} onLogout={() => supabase.auth.signOut()} />
+          <DashboardPage key={session.user.id} session={session} onLogout={() => supabase.auth.signOut()} />
         )
       ) : (
         <LoginPage />

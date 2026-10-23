@@ -58,6 +58,10 @@
 .order-feedback--error { color: var(--error); }
 .order-feedback button { flex-shrink: 0; min-height: 36px; padding: 4px 8px; border: 0; border-radius: var(--radius-sm); color: inherit; background: transparent; font: inherit; cursor: pointer; }
 .order-feedback button:focus-visible { outline: 2px solid var(--point-dark); }
+.order-recovery { flex-wrap: wrap; }
+.order-recovery > span { flex: 1 1 100%; overflow-wrap: anywhere; }
+.order-recovery > button { border: 1px solid var(--line); color: var(--text-body); }
+.order-recovery > button:disabled { opacity: .55; cursor: wait; }
 @media (max-width: 768px) {
   .order-dialog__header, .order-dialog__body { padding: 20px; }
   .order-dialog__header h2 { font-size: 20px; }

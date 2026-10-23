@@ -111,14 +111,14 @@ export function OrderDeleteModal({ order, onClose, onDelete, onRetry, busy, pend
         {error && <p className="order-dialog__error" role="alert">{error}</p>}
       </div>
       <footer className="order-dialog__footer">
-        <button type="button" className="order-dialog__button" onClick={onClose} disabled={busy || pending} autoFocus>취소</button>
+        {!pending && <button type="button" className="order-dialog__button" onClick={onClose} disabled={busy} autoFocus>취소</button>}
         <button
           type="button"
           className="order-dialog__button order-dialog__button--destructive"
           onClick={pending ? onRetry : onDelete}
           disabled={busy}
         >
-          {busy ? '삭제 중...' : pending ? '처리 결과 다시 확인' : '주문 삭제'}
+          {busy ? '처리 중...' : pending ? '처리 결과 확인' : '주문 삭제'}
         </button>
       </footer>
     </OrderDialog>

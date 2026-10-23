@@ -115,6 +115,7 @@ body {
 
 /* Main content area - layout managed here (not inline) so mobile media query can override */
 .main-content {
+  min-width: 0;
   margin-left: 240px;
   padding: 48px;
 }

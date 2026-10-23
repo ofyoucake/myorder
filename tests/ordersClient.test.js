@@ -7,6 +7,48 @@ const stored = { ...input, id: 'ord_2ef261cb-b840-47ae-b522-5ebf50fa5819', revis
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const idsReady = (orderCount = 0) => json({ assignedCount: 0, orderCount, unchangedOtherColumns: true });
 
+test('a versioned intent keeps its original version across refreshes and never auto retries', async () => {
+  const requests = [];
+  let version = 4;
+  const client = createOrdersClient({ getAccessToken: async () => 'session-test-token', fetchImpl: async (_url, options) => {
+    if (options.method === 'GET') return json({ orders: [stored], writeVersion: version });
+    if (JSON.parse(options.body).requestId) { requests.push(JSON.parse(options.body)); throw new TypeError('offline'); }
+    return idsReady();
+  } });
+  await client.list();
+  assert.equal(client.getWriteVersion(), 4);
+  await assert.rejects(client.create(input, 'original', 4), e => e.code === 'NETWORK_ERROR');
+  assert.equal(requests.length, 1);
+  version = 9;
+  await client.list();
+  await assert.rejects(client.create(input, 'original', 4), e => e.code === 'NETWORK_ERROR');
+  assert.equal(requests[1].writeVersion, 4);
+});
+
+test('confirmation transmits only a descriptor and validates terminal states', async () => {
+  let sent;
+  const client = createOrdersClient({ getAccessToken: async () => 'session-test-token', fetchImpl: async (url, options) => {
+    sent = { url, body: JSON.parse(options.body) };
+    return json({ state: 'not_applied', writeVersion: 8 });
+  } });
+  const descriptor = { kind: 'create', requestId: 'some-intent', orderId: '', writeVersion: 7 };
+  assert.deepEqual(await client.confirm({ ...descriptor, input }), { state: 'not_applied', writeVersion: 8 });
+  assert.deepEqual(sent, { url: '/api/orders/confirm', body: descriptor });
+  assert.equal(client.getWriteVersion(), 8, 'a definitive fence supplies the next usable version even if a subsequent attempt is rejected');
+});
+
+test('a malformed list never publishes a version for a snapshot the UI could not display', async () => {
+  let malformed = false;
+  const client = createOrdersClient({ getAccessToken: async () => 'session-test-token', fetchImpl: async (_url, options) => {
+    if (options.method === 'POST') return idsReady();
+    return malformed ? json({ orders: [{ id: 'bad' }], writeVersion: 8 }) : json({ orders: [stored], writeVersion: 4 });
+  } });
+  await client.list();
+  malformed = true;
+  await assert.rejects(client.list(), e => e.code === 'INVALID_RESPONSE');
+  assert.equal(client.getWriteVersion(), 4);
+});
+
 test('overlapping list loads share one ID sync and refresh again after completion', async () => {
   const requests = [];
   const client = createOrdersClient({

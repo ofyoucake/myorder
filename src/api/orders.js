@@ -16,10 +16,12 @@ const ERROR_MESSAGES = {
   INVALID_RESPONSE: '저장 결과를 확인할 수 없습니다. 목록을 새로고침해 확인해주세요.',
   NETWORK_ERROR: '통신이 끊겨 처리 결과를 확인하지 못했습니다. 목록을 새로고침해 확인해주세요.',
   WRITE_PENDING: '처리 결과가 아직 확정되지 않았습니다. 같은 요청으로 다시 확인해주세요.',
+  REQUEST_EXPIRED: '이전 요청의 확인 범위를 지났습니다. 재저장하지 말고 주문 목록을 확인해주세요.',
+  REQUEST_CANCELLED: '이전 요청은 실행되지 않도록 종료되었습니다. 최신 목록을 불러온 뒤 다시 입력해주세요.',
 };
 
 const ALLOWED_BASE_PATHS = new Set(['/api/orders', '/api/order-tests']);
-const UNKNOWN_WRITE_CODES = new Set(['NETWORK_ERROR', 'INVALID_RESPONSE', 'SERVICE_UNAVAILABLE', 'WRITE_PENDING']);
+const UNKNOWN_WRITE_CODES = new Set(['NETWORK_ERROR', 'INVALID_RESPONSE', 'SERVICE_UNAVAILABLE', 'WRITE_PENDING', 'REQUEST_EXPIRED']);
 const isNonNegativeInteger = (value) => Number.isSafeInteger(value) && value >= 0;
 
 export class OrderApiError extends Error {
@@ -54,6 +56,7 @@ export function createOrdersClient({
   basePath = '/api/orders',
 }) {
   if (!ALLOWED_BASE_PATHS.has(basePath)) throw new TypeError('Unsupported order API base path');
+  let writeVersion;
 
   const request = async (path = '', method = 'GET', body) => {
     let token;
@@ -93,21 +96,28 @@ export function createOrdersClient({
     }
   };
 
-  const mutation = async (order, input, requestId, method) => {
+  const mutation = async (order, input, requestId, method, intentVersion) => {
     if (order && !canManageOrder(order)) throw new OrderApiError('ORDER_NOT_READY');
     if (typeof requestId !== 'string' || !requestId) throw new OrderApiError('ORDER_NOT_READY');
+    if (intentVersion !== undefined && !isNonNegativeInteger(intentVersion)) throw new OrderApiError('ORDER_NOT_READY');
     const body = {
       ...(input ? { order: Object.fromEntries(ORDER_INPUT_FIELDS.map((field) => [field, input[field] ?? ''])) } : {}),
       ...(order ? { expectedRevision: order.revision } : {}),
       requestId,
+      ...(intentVersion === undefined ? {} : { writeVersion: intentVersion }),
     };
     const result = await request(order ? `/${encodeURIComponent(order.id)}` : '', method, body);
+    if (intentVersion !== undefined) {
+      if (!isNonNegativeInteger(result?.writeVersion) || result.writeVersion !== intentVersion + 1) throw new OrderApiError('INVALID_RESPONSE');
+    }
     if (method === 'DELETE') {
       if (result?.deletedId !== order.id) throw new OrderApiError('INVALID_RESPONSE');
+      if (intentVersion !== undefined) writeVersion = result.writeVersion;
       return result.deletedId;
     }
     const savedOrder = validateOrder(result?.order);
     if (order && savedOrder.id !== order.id) throw new OrderApiError('INVALID_RESPONSE');
+    if (intentVersion !== undefined) writeVersion = result.writeVersion;
     return savedOrder;
   };
 
@@ -137,10 +147,25 @@ export function createOrdersClient({
       await synchronizeIds();
       const result = await request();
       if (!Array.isArray(result?.orders)) throw new OrderApiError('INVALID_RESPONSE');
-      return result.orders.map(validateOrder);
+      const orders = result.orders.map(validateOrder);
+      // Older read responses may still be displayed, but cannot issue a new intent.
+      writeVersion = isNonNegativeInteger(result.writeVersion) ? result.writeVersion : undefined;
+      return orders;
     },
-    create: (input, requestId) => mutation(null, input, requestId, 'POST'),
-    update: (order, input, requestId) => mutation(order, input, requestId, 'PATCH'),
-    remove: (order, requestId) => mutation(order, null, requestId, 'DELETE'),
+    getWriteVersion() {
+      if (!isNonNegativeInteger(writeVersion)) throw new OrderApiError('ORDER_NOT_READY');
+      return writeVersion;
+    },
+    async confirm(intent) {
+      const descriptor = Object.fromEntries(['requestId', 'writeVersion', 'kind', 'orderId'].map(key => [key, intent[key]]));
+      const result = await request('/confirm', 'POST', descriptor);
+      if (!['completed', 'not_applied', 'expired'].includes(result?.state) || !isNonNegativeInteger(result.writeVersion)) throw new OrderApiError('INVALID_RESPONSE');
+      if (result.state !== 'expired' && result.writeVersion <= intent.writeVersion) throw new OrderApiError('INVALID_RESPONSE');
+      if (result.state === 'not_applied') writeVersion = result.writeVersion;
+      return result;
+    },
+    create: (input, requestId, version) => mutation(null, input, requestId, 'POST', version),
+    update: (order, input, requestId, version) => mutation(order, input, requestId, 'PATCH', version),
+    remove: (order, requestId, version) => mutation(order, null, requestId, 'DELETE', version),
   };
 }

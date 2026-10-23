@@ -5,6 +5,7 @@ import { OrderCard } from '../components/OrderCard';
 import OrderFormModal from '../components/OrderFormModal';
 import OrderDetailModal, { OrderDeleteModal } from '../components/OrderDetailModal';
 import { canManageOrder, createOrdersClient, isUnknownWriteError } from '../api/orders';
+import { createRecoveryJournal } from '../orderRecovery';
 import { supabase } from '../supabaseClient';
 import Papa from 'papaparse';
 import { ORDER_TEXT_FIELDS, preserveOrderText, groupOrderText, matchesOrderFilters } from '../orderText';
@@ -21,8 +22,9 @@ const DEFINITIVE_NON_WRITE_CODES = new Set([
   'VALIDATION_ERROR',
   'ORDER_NOT_READY',
   'RATE_LIMITED',
+  'REQUEST_CANCELLED',
 ]);
-const UNKNOWN_WRITE_MESSAGE = '처리 결과를 확인하지 못했습니다. 입력 내용은 잠겨 있습니다. 같은 요청으로 다시 확인하거나 서버 상태를 확인하기 전에는 새 작업을 시작하지 마세요.';
+const UNKNOWN_WRITE_MESSAGE = '저장 결과를 확인하지 못했습니다. 새 작업은 잠겨 있습니다. 인터넷 연결 후 ‘처리 결과 확인’을 눌러주세요. 자동으로 재시도하지 않습니다.';
 const ordersClient = createOrdersClient({
   basePath: ORDER_API_BASE_PATH,
   getAccessToken: async () => {
@@ -99,7 +101,16 @@ const DashboardPage = ({ session, onLogout }) => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState('');
-  const [pendingMutation, setPendingMutation] = useState(null);
+  const recoveryJournal = useMemo(() => createRecoveryJournal({
+    getItem: key => window.sessionStorage.getItem(key),
+    setItem: (key, value) => window.sessionStorage.setItem(key, value),
+    removeItem: key => window.sessionStorage.removeItem(key),
+  }, `${session.user.id}:${ORDER_API_BASE_PATH}`), [session.user.id]);
+  const [pendingMutation, setPendingMutation] = useState(() => {
+    const saved = ORDER_API_ENABLED ? recoveryJournal.read() : null;
+    return saved ? { ...saved, recovered: true } : null;
+  });
+  const [reviewReady, setReviewReady] = useState(false);
   const [orderFeedback, setOrderFeedback] = useState('');
   const [loadError, setLoadError] = useState('');
   const mutationLock = useRef(false);
@@ -108,7 +119,7 @@ const DashboardPage = ({ session, onLogout }) => {
   // Database Sync
   const [sheetInfo, setSheetInfo] = useState('');
   const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(ORDER_API_ENABLED);
 
   const filterRef = useRef(null);
 
@@ -169,7 +180,7 @@ const DashboardPage = ({ session, onLogout }) => {
         if (sequence === loadSequence.current) {
           setOrders(latestOrders.map(order => ({ ...order, time: order.pickupDate.split(' ')[1] || '00:00', dateOnly: normalizeDateKey(order.pickupDate.split(' ')[0]) })));
         }
-        return;
+        return true;
       }
       let sheetId = info;
       if (info.includes('/d/')) sheetId = info.split('/d/')[1].split('/')[0];
@@ -217,6 +228,7 @@ const DashboardPage = ({ session, onLogout }) => {
       if (sequence === loadSequence.current) {
         setLoadError(ORDER_API_ENABLED ? error.message : '시트를 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해주세요.');
       }
+      return false;
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
@@ -247,25 +259,33 @@ const DashboardPage = ({ session, onLogout }) => {
     if (editing) setShowDetailModal(true);
   };
 
-  const saveOrder = async (input, retryRequestId = null) => {
-    const pendingSave = pendingMutation?.kind === 'save' ? pendingMutation : null;
-    const requestId = retryRequestId || orderEditor?.requestId;
-    if (
-      mutationLock.current
-      || !orderEditor
-      || !ORDER_API_ENABLED
-      || (pendingMutation && (!pendingSave || pendingSave.requestId !== requestId))
-    ) return;
-
-    const editor = orderEditor;
-    const submittedInput = pendingSave ? pendingSave.input : Object.freeze({ ...input });
+  const performIntent = async intent => {
     mutationLock.current = true;
     setMutationBusy(true);
     setMutationError('');
+    let sent = false;
     try {
-      const saved = editor.order
-        ? await ordersClient.update(editor.order, submittedInput, requestId)
-        : await ordersClient.create(submittedInput, requestId);
+      // Persist the non-personal guard BEFORE sending anything that could change the sheet.
+      recoveryJournal.save(intent);
+      setPendingMutation(intent);
+      sent = true;
+      if (intent.kind === 'delete') {
+        const deletedId = await ordersClient.remove(intent.order, intent.requestId, intent.writeVersion);
+        recoveryJournal.clear();
+        ++loadSequence.current;
+        setLoading(false);
+        setLoadError('');
+        setOrders(previous => previous.filter(order => order.id !== deletedId));
+        setPendingMutation(null);
+        setDeleteTarget(null);
+        setSelectedOrder(null);
+        setOrderFeedback('주문을 삭제했습니다.');
+        return;
+      }
+      const saved = intent.kind === 'update'
+        ? await ordersClient.update(intent.order, intent.input, intent.requestId, intent.writeVersion)
+        : await ordersClient.create(intent.input, intent.requestId, intent.writeVersion);
+      recoveryJournal.clear();
       const pickupParts = saved.pickupDate.split(' ');
       const updated = { ...saved, time: pickupParts[1] || '00:00', dateOnly: normalizeDateKey(pickupParts[0]) };
       ++loadSequence.current;
@@ -283,18 +303,24 @@ const DashboardPage = ({ session, onLogout }) => {
       setStartDate(null);
       setEndDate(null);
       setActiveTab('day');
-      setOrderFeedback(editor.order ? '주문을 수정했습니다.' : '주문을 등록했습니다.');
+      setOrderFeedback(intent.kind === 'update' ? '주문을 수정했습니다.' : '주문을 등록했습니다.');
       setOrderEditor(null);
       setShowDetailModal(true);
     } catch (error) {
-      if (isUnknownWriteError(error)) {
-        setPendingMutation({ kind: 'save', order: editor.order, requestId, input: submittedInput });
+      if (isUnknownWriteError(error) || (sent && !DEFINITIVE_NON_WRITE_CODES.has(error.code))) {
+        setPendingMutation(intent);
         setMutationError(UNKNOWN_WRITE_MESSAGE);
       } else {
-        setPendingMutation(null);
-        setMutationError(error.message);
-        if (DEFINITIVE_NON_WRITE_CODES.has(error.code)) {
+        try {
+          recoveryJournal.clear();
+          setPendingMutation(null);
+          setMutationError(error.code ? error.message : '브라우저의 복구 정보 저장소를 사용할 수 없어 전송하지 않았습니다. 저장소 설정을 확인해주세요.');
           setOrderEditor(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
+          setDeleteTarget(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
+          if (sent) await loadSheetData(sheetDataSource);
+        } catch {
+          setPendingMutation({ ...intent, recovered: true });
+          setMutationError('복구 정보를 정리하지 못했습니다. 새 작업을 중지하고 저장소 설정을 확인해주세요.');
         }
       }
     } finally {
@@ -303,54 +329,60 @@ const DashboardPage = ({ session, onLogout }) => {
     }
   };
 
-  const confirmDelete = async (retryRequestId = null) => {
-    const pendingDelete = pendingMutation?.kind === 'delete' ? pendingMutation : null;
-    const requestId = retryRequestId || deleteTarget?.requestId;
-    if (
-      mutationLock.current
-      || !deleteTarget
-      || !ORDER_API_ENABLED
-      || (pendingMutation && (!pendingDelete || pendingDelete.requestId !== requestId))
-    ) return;
+  const beginIntent = (kind, order, input, requestId) => {
+    if (mutationLock.current || pendingMutation || !ORDER_API_ENABLED) return;
+    try {
+      const writeVersion = ordersClient.getWriteVersion();
+      performIntent({ kind, orderId: order?.id || '', order, input: input ? Object.freeze({ ...input }) : undefined, requestId, writeVersion });
+    } catch (error) { setMutationError(error.message); }
+  };
+  const saveOrder = input => {
+    if (orderEditor) beginIntent(orderEditor.order ? 'update' : 'create', orderEditor.order, input, orderEditor.requestId);
+  };
+  const confirmDelete = () => {
+    if (deleteTarget) beginIntent('delete', deleteTarget.order, undefined, deleteTarget.requestId);
+  };
 
-    const target = deleteTarget;
+  const retryPendingMutation = async () => {
+    if (mutationLock.current || !pendingMutation || pendingMutation.invalid) return;
     mutationLock.current = true;
     setMutationBusy(true);
     setMutationError('');
     try {
-      const deletedId = await ordersClient.remove(target.order, requestId);
-      ++loadSequence.current;
-      setLoading(false);
-      setLoadError('');
-      setOrders(previous => previous.filter(order => order.id !== deletedId));
-      setPendingMutation(null);
-      setDeleteTarget(null);
-      setSelectedOrder(null);
-      setOrderFeedback('주문을 삭제했습니다.');
-    } catch (error) {
-      if (isUnknownWriteError(error)) {
-        setPendingMutation({ kind: 'delete', order: target.order, requestId });
-        setMutationError(UNKNOWN_WRITE_MESSAGE);
-      } else {
-        setPendingMutation(null);
-        setMutationError(error.message);
-        if (DEFINITIVE_NON_WRITE_CODES.has(error.code)) {
-          setDeleteTarget(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
-        }
+      const result = await ordersClient.confirm(pendingMutation);
+      if (result.state === 'not_applied' && !pendingMutation.recovered) {
+        // Confirmation fenced the original request: only now may a fresh attempt be issued.
+        recoveryJournal.clear();
+        await performIntent({ ...pendingMutation, requestId: crypto.randomUUID(), writeVersion: result.writeVersion });
+        return;
       }
+      setOrderEditor(null);
+      setDeleteTarget(null);
+      setShowDetailModal(false);
+      if (result.state === 'expired') {
+        setPendingMutation({ ...pendingMutation, reviewRequired: true });
+        setMutationError('이전 요청의 기록은 확인 범위를 지났습니다. 재저장하지 않았습니다. 최신 주문 목록을 직접 확인한 뒤 확인 완료를 눌러주세요.');
+        setReviewReady(await loadSheetData(sheetDataSource) === true);
+        return;
+      }
+      if (await loadSheetData(sheetDataSource) !== true) throw new Error('List unavailable');
+      recoveryJournal.clear();
+      setPendingMutation(null);
+      setSelectedOrder(null);
+      setOrderFeedback(result.state === 'completed' ? '이전 작업이 정상 완료된 것을 확인했습니다. 중복 처리하지 않았습니다.'
+        : '이전 작업은 저장되지 않았으며, 뒤늦게 실행되지 않도록 종료했습니다. 입력 내용은 기기에 보관하지 않으므로 다시 입력해주세요.');
+    } catch (error) {
+      setMutationError(error.code ? error.message : '결과 확인 또는 최신 목록 조회를 완료하지 못했습니다. 새 작업은 계속 잠겨 있습니다.');
     } finally {
       mutationLock.current = false;
       setMutationBusy(false);
     }
   };
 
-  const retryPendingMutation = () => {
-    if (mutationLock.current || !pendingMutation) return;
-    if (pendingMutation.kind === 'save' && orderEditor?.requestId === pendingMutation.requestId) {
-      saveOrder(pendingMutation.input, pendingMutation.requestId);
-    } else if (pendingMutation.kind === 'delete' && deleteTarget?.requestId === pendingMutation.requestId) {
-      confirmDelete(pendingMutation.requestId);
-    }
+  const acknowledgeReview = () => {
+    if (mutationLock.current || !reviewReady || !pendingMutation?.reviewRequired) return;
+    try { recoveryJournal.clear(); setPendingMutation(null); setMutationError(''); setReviewReady(false); }
+    catch { setMutationError('복구 정보 정리에 실패했습니다. 새 작업은 계속 잠겨 있습니다.'); }
   };
 
   // ─── 메시지 복사 헬퍼 함수 ───────────────────────────────────────
@@ -724,8 +756,8 @@ const DashboardPage = ({ session, onLogout }) => {
             </div>
           </div>
           <div className="dash-header-actions" style={{ display: 'flex', gap: '8px' }}>
-            {ORDER_API_ENABLED && (
-              <button type="button" className="order-create-button" onClick={() => openOrderEditor()} disabled={mutationBusy || Boolean(pendingMutation)}>
+            {ORDER_API_ENABLED && !pendingMutation && (
+              <button type="button" className="order-create-button" onClick={() => openOrderEditor()} disabled={loading || Boolean(loadError) || mutationBusy || Boolean(pendingMutation)}>
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
                 주문 등록
               </button>
@@ -1012,6 +1044,16 @@ const DashboardPage = ({ session, onLogout }) => {
 
         {orderFeedback && <div className="order-feedback" role="status"><span>{orderFeedback}</span><button type="button" aria-label="안내 닫기" onClick={() => setOrderFeedback('')}>×</button></div>}
         {loadError && <div className="order-feedback order-feedback--error" role="alert"><span>{loadError}</span><button type="button" onClick={() => loadSheetData(sheetInfo)}>다시 불러오기</button></div>}
+        {pendingMutation && !orderEditor && !deleteTarget && (
+          <div className="order-feedback order-feedback--error order-recovery" role="alert">
+            <span>{mutationError || (pendingMutation.invalid ? '복구 정보를 읽을 수 없습니다. 새 작업을 중지했습니다. 관리자 점검이 필요합니다.'
+              : '이전 작업의 결과 확인이 필요합니다. 개인정보 원문은 기기에 보관하지 않으며, 확인 전에는 새 작업을 할 수 없습니다.')}</span>
+            {!pendingMutation.invalid && <button type="button" onClick={retryPendingMutation} disabled={mutationBusy}>
+              {mutationBusy ? '확인 중...' : '처리 결과 확인'}
+            </button>}
+            {pendingMutation.reviewRequired && <button type="button" onClick={acknowledgeReview} disabled={mutationBusy || !reviewReady}>주문 목록을 확인했습니다</button>}
+          </div>
+        )}
         {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'statistics' ? renderStatistics() : renderMyPage()}
 
         {showDetailModal && selectedOrder && (
@@ -1020,7 +1062,7 @@ const DashboardPage = ({ session, onLogout }) => {
             onClose={() => setShowDetailModal(false)}
             onCopy={handleCopy}
             copiedType={copiedType}
-            editable={ORDER_API_ENABLED && canManageOrder(selectedOrder)}
+            editable={ORDER_API_ENABLED && !pendingMutation && !mutationBusy && canManageOrder(selectedOrder)}
             onEdit={() => openOrderEditor(selectedOrder)}
             onDelete={() => {
               if (pendingMutation) return;
@@ -1039,7 +1081,7 @@ const DashboardPage = ({ session, onLogout }) => {
             onSave={saveOrder}
             onCancel={closeOrderEditor}
             busy={mutationBusy}
-            pending={pendingMutation?.kind === 'save'}
+            pending={Boolean(pendingMutation)}
             onRetry={retryPendingMutation}
             error={mutationError}
           />
