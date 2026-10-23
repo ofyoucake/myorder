@@ -5,8 +5,8 @@
 The owner chose a small, sequential workflow instead of an indefinite audit store.
 Keep only the three latest terminal intent receipts (completed or safely cancelled),
 plus one monotonic document version. No hidden tab, extra database, dependency,
-or reservation migration is needed. Implementation and local QC are complete;
-production activation is a separate release step, not performed by this change.
+or reservation migration is needed. Production activation and isolated live QC
+were completed on 2026-10-23; the release evidence is recorded below.
 
 ## Protocol
 
@@ -85,3 +85,48 @@ writes until a compatible fix is deployed. Do not reset/delete the version metad
   acknowledgment. No real Google/Supabase calls or production data are involved.
 - `node tests/responsive-qc.mjs` checks 320/768/1024/1440px and keyboard focus.
   The recovery notice is also checked for clipping, not merely document scrollWidth.
+
+## Production release evidence — 2026-10-23
+
+- Source `55c6706` was first deployed as `d7e4ee1a` with production CRUD disabled
+  and the isolated test flag enabled. Production reservations were never used as
+  write fixtures.
+- The five reachable unversioned writing deployments (`f495f7e4`, `fcbb2802`,
+  `db4996ae`, `e9d36b0b`, `3afdd60d`) were removed individually; each old API URL
+  subsequently returned 404. Their source remains in Git. Deployments without an
+  enabled production writer were not removed. More than two minutes elapsed
+  after closing the last old writer before activating v2 production writes.
+- Through the real `/order-test` UI, one explicitly labelled
+  `[테스트 전용·제작 금지]` order with a 2099 pickup date was created, edited twice,
+  then deleted. All four operations succeeded against Google, including repeated
+  version metadata replacement and receipt rollover. Spaces, line breaks and
+  native order/pickup dates round-tripped. The read-only inspector then showed
+  zero occupied test rows and no test lock.
+- Production checks before staging, after isolated writes and after activation
+  each showed 1,169 orders, zero missing/duplicate IDs and compatible row formats.
+  The protected A:K/M:W value-and-formula fingerprint was identical. Its private
+  value and customer data are intentionally not reproduced here. No reservation,
+  formula or date-format migration was performed.
+- Node tests: 104 passed. Production build and focused test-script lint passed.
+  The six local browser fault scenarios passed. A test-harness reload race was
+  reproduced: a still-visible old document could satisfy readiness immediately
+  after the reload command. The harness now waits for a changed time origin and
+  completed new document; inverting that condition made the check fail. No app
+  behavior or assertions were weakened to resolve it.
+- Source `a148634` was activated as `5a3b2e30` with `ORDER_API_ENABLED=true` and
+  the temporary isolated flag removed. Homepage returned 200, unauthenticated
+  production API 401, and both isolated API entry points 403. The authenticated
+  dashboard loaded the eight orders for today's KST date and enabled registration
+  without a production test mutation. The temporary `d7e4ee1a` deployment is
+  retired after verification so its isolated-test URL is not left enabled.
+- Existing repository-wide lint findings and development-only dependency audit
+  findings are unchanged; they were not suppressed or claimed resolved here.
+
+### Order-date display
+
+The existing spaced `yyyy. mm. dd` and app-applied `yyyy.mm.dd` patterns are
+display formats for native numeric Sheet dates. Reading uses the underlying
+serial, not the formatted display, so the current compatible data does not need
+a format change. This is not a promise to accept arbitrary text dates: literal
+text input still follows the strict model format. Existing cell formats remain
+untouched by this release.
