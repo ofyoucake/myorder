@@ -39,7 +39,7 @@ small samples are not a production p95/SLA. Disable the temporary test flag afte
 Rollback is the previous successful deployment or a focused Git revert. L IDs and
 existing receipts remain intact; no reservation migration is required for this change.
 
-## Unresolved receipt capacity (explicitly not fixed here)
+## Receipt capacity in the speed-only release
 
 The v1 completion metadata is still retained; deleting it would break old retry
 safety. Google limits document metadata to 30,000 characters; each current receipt
@@ -47,6 +47,12 @@ uses approximately 437 characters. The user declined the proposed hidden tab.
 An alternative durable receipt design needs agreement before provisioning another
 store. Do not claim this speed change removes the cumulative receipt limit.
 Do not evict receipts or steal abandoned locks to make saves appear successful.
+
+The subsequent owner-approved bounded recovery implementation replaces indefinite
+retention with three terminal receipts and a monotonic version fence. See
+[order-recovery.md](order-recovery.md) for its protocol, privacy trade-off and
+activation gate. It is not activated by the historical speed-only deployment below.
+Once v2 is active, the old unversioned rollback described above is not safe.
 
 ## Live verification, 2026-10-23 (KST)
 

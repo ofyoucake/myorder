@@ -57,9 +57,10 @@ export async function handleOrdersRequest({ request, env, params = {} }, {
     if (url.search) invalid();
     const id = params.id;
     const synchronize = id === 'ids';
-    if (!synchronize && id !== undefined && (typeof id !== 'string' || !id.startsWith('ord_') || !UUID.test(id.slice(4)))) invalid();
+    const confirm = id === 'confirm';
+    if (!synchronize && !confirm && id !== undefined && (typeof id !== 'string' || !id.startsWith('ord_') || !UUID.test(id.slice(4)))) invalid();
     const method = request.method;
-    if (!(synchronize ? ['POST'] : id ? ['PATCH', 'DELETE'] : ['GET', 'POST']).includes(method)) throw new OrderServerError('METHOD_NOT_ALLOWED', 405);
+    if (!(synchronize || confirm ? ['POST'] : id ? ['PATCH', 'DELETE'] : ['GET', 'POST']).includes(method)) throw new OrderServerError('METHOD_NOT_ALLOWED', 405);
     if (method !== 'GET' && request.headers.get('Origin') !== url.origin) throw new OrderServerError('FORBIDDEN', 403);
     const authStarted = performance.now();
     await authorize(request, env);
@@ -68,11 +69,16 @@ export async function handleOrdersRequest({ request, env, params = {} }, {
     let body;
     if (method !== 'GET') {
       body = await readBody(request);
-      const keys = synchronize ? [] : method === 'DELETE' ? ['requestId', 'expectedRevision'] : ['order', 'requestId', ...(id ? ['expectedRevision'] : [])];
-      if (Object.keys(body).length !== keys.length || Object.keys(body).some(key => !keys.includes(key))) invalid();
+      const keys = synchronize ? [] : confirm ? ['requestId', 'writeVersion', 'kind', 'orderId']
+        : method === 'DELETE' ? ['requestId', 'expectedRevision'] : ['order', 'requestId', ...(id ? ['expectedRevision'] : [])];
+      const allowed = !synchronize && !confirm ? [...keys, 'writeVersion'] : keys;
+      if (keys.some(key => !Object.hasOwn(body, key)) || Object.keys(body).some(key => !allowed.includes(key))) invalid();
       if (!synchronize && (typeof body.requestId !== 'string' || !UUID.test(body.requestId))) invalid();
-      if (!synchronize && id && (typeof body.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedRevision))) invalid();
-      if (!synchronize && method !== 'DELETE') {
+      if (Object.hasOwn(body, 'writeVersion') && (!Number.isSafeInteger(body.writeVersion) || body.writeVersion < 0)) invalid();
+      if (confirm && (!['create', 'update', 'delete'].includes(body.kind)
+        || (body.kind === 'create' ? body.orderId !== '' : typeof body.orderId !== 'string' || !body.orderId.startsWith('ord_') || !UUID.test(body.orderId.slice(4))))) invalid();
+      if (!synchronize && !confirm && id && (typeof body.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedRevision))) invalid();
+      if (!synchronize && !confirm && method !== 'DELETE') {
         validateOrderInput(body.order);
         if (testTarget && !body.order.customer.startsWith('[테스트 전용·제작 금지]')) invalid();
       }
@@ -81,10 +87,12 @@ export async function handleOrdersRequest({ request, env, params = {} }, {
     const client = createClient({ credentialsJson: env.GOOGLE_SERVICE_ACCOUNT_JSON, allowedSpreadsheetIds: [target.spreadsheetId], readOnly: method === 'GET', onMetric });
     const store = createStore({ client, ...target });
     if (synchronize) return respond(await store.ensureIds());
-    if (method === 'GET') return respond({ orders: await store.list() });
-    if (method === 'POST') return respond({ order: await store.create(body.order, body.requestId) }, 201);
-    if (method === 'PATCH') return respond({ order: await store.update(id, body.order, body.expectedRevision, body.requestId) });
-    return respond({ deletedId: await store.remove(id, body.expectedRevision, body.requestId) });
+    if (confirm) return respond(await store.confirm(body));
+    if (method === 'GET') return respond(await store.listState());
+    const version = body.writeVersion === undefined ? {} : { writeVersion: body.writeVersion + 1 };
+    if (method === 'POST') return respond({ order: await store.create(body.order, body.requestId, body.writeVersion), ...version }, 201);
+    if (method === 'PATCH') return respond({ order: await store.update(id, body.order, body.expectedRevision, body.requestId, body.writeVersion), ...version });
+    return respond({ deletedId: await store.remove(id, body.expectedRevision, body.requestId, body.writeVersion), ...version });
   } catch (error) {
     return serverError(error);
   }

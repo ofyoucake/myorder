@@ -14,6 +14,8 @@ export const TEST_SPREADSHEET_ID = '1zUk9o-c1d-8dKkevy-Xt374AbSzwRKCmlsx84cBdids
 export const LOCK_METADATA_ID = 2026102201;
 export const LOCK_METADATA_KEY = 'myorder.orderStore.lock.v1';
 export const COMPLETION_METADATA_KEY = 'myorder.orderStore.completed.v1';
+export const VERSION_METADATA_KEY = 'myorder.orderStore.version.v2';
+const VERSION_METADATA_ID = 2026102302;
 
 const TARGETS = new Map([
   [PRODUCTION_SPREADSHEET_ID, '주문정보'],
@@ -64,6 +66,23 @@ const completionRecord = async (requestId, kind, completedOrderId, requestOrderI
 
 const validRecord = record => record && HASH.test(record.requestIdHash) && HASH.test(record.requestHash)
   && HASH.test(record.kindHash) && HASH.test(record.orderIdHash) && HASH.test(record.revisionHash);
+
+const versionFrom = metadata => {
+  const matches = (metadata?.developerMetadata || []).filter(m => m.metadataKey === VERSION_METADATA_KEY || m.metadataId === VERSION_METADATA_ID);
+  if (!matches.length) {
+    for (const item of metadata?.developerMetadata || []) {
+      if (item.metadataKey !== COMPLETION_METADATA_KEY) continue;
+      let record;
+      try { record = JSON.parse(item.metadataValue); } catch { fail('SERVICE_UNAVAILABLE'); }
+      if (record?.sequence !== undefined) fail('SERVICE_UNAVAILABLE');
+    }
+    return 0;
+  }
+  const item = matches[0];
+  if (matches.length !== 1 || item.metadataId !== VERSION_METADATA_ID || item.metadataKey !== VERSION_METADATA_KEY
+    || !/^[1-9]\d*$/.test(item.metadataValue) || !Number.isSafeInteger(Number(item.metadataValue))) fail('SERVICE_UNAVAILABLE');
+  return Number(item.metadataValue);
+};
 
 export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } = {}) {
   const expectedTitle = TARGETS.get(spreadsheetId);
@@ -172,6 +191,8 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       fail('SERVICE_UNAVAILABLE');
     }
     if (!validRecord(item.record)) fail('SERVICE_UNAVAILABLE');
+    if (item.record.sequence !== undefined && (!Number.isSafeInteger(item.record.sequence)
+      || item.record.sequence < 1 || !['completed', 'not_applied'].includes(item.record.state))) fail('SERVICE_UNAVAILABLE');
     return true;
   });
 
@@ -179,9 +200,39 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     const requestIdHash = await hashText(requestId);
     const requestHash = (await completionRecord(requestId, kind, orderId, orderId, expectedRevision, order)).requestHash;
     const matches = recordsFrom(metadata).filter(item => item.record.requestIdHash === requestIdHash);
+    if (matches.some(item => item.record.state === 'not_applied')) fail('REQUEST_CANCELLED', 409);
     if (matches.some(item => item.record.requestHash !== requestHash)) fail('CONFLICT', 409);
     if (matches.length > 1) fail('CONFLICT', 409);
     return matches[0]?.record;
+  };
+
+  const deleteMetadata = item => ({ deleteDeveloperMetadata: { dataFilter: { developerMetadataLookup: {
+    metadataId: item.metadataId, metadataKey: item.metadataKey, metadataValue: item.metadataValue, visibility: 'PROJECT',
+  } } } });
+
+  // Retire old proof only in the same atomic batch as the new version and receipt.
+  const advanceRequests = (metadata, record) => {
+    const version = versionFrom(metadata);
+    if (!Number.isSafeInteger(version + 1) || record.sequence !== version + 1) fail('SERVICE_UNAVAILABLE');
+    const receipts = recordsFrom(metadata);
+    const numbered = receipts.filter(m => m.record.sequence !== undefined).sort((a, b) => a.record.sequence - b.record.sequence);
+    if (numbered.some(m => m.record.sequence > version)
+      || new Set(numbered.map(m => m.record.sequence)).size !== numbered.length) fail('SERVICE_UNAVAILABLE');
+    const retained = numbered.slice(-2);
+    const versionItem = (metadata.developerMetadata || []).find(m => m.metadataKey === VERSION_METADATA_KEY);
+    return [
+      ...(receipts.length ? [{ deleteDeveloperMetadata: { dataFilter: { developerMetadataLookup: {
+        metadataKey: COMPLETION_METADATA_KEY, visibility: 'PROJECT', locationType: 'SPREADSHEET',
+      } } } }] : []),
+      ...retained.map(item => ({ createDeveloperMetadata: { developerMetadata: {
+        metadataKey: COMPLETION_METADATA_KEY, metadataValue: item.metadataValue, visibility: 'PROJECT', location: { spreadsheet: true },
+      } } })),
+      ...(versionItem ? [deleteMetadata(versionItem)] : []),
+      { createDeveloperMetadata: { developerMetadata: { metadataId: VERSION_METADATA_ID, metadataKey: VERSION_METADATA_KEY,
+        metadataValue: String(record.sequence), visibility: 'PROJECT', location: { spreadsheet: true } } } },
+      { createDeveloperMetadata: { developerMetadata: { metadataKey: COMPLETION_METADATA_KEY, metadataValue: JSON.stringify(record),
+        visibility: 'PROJECT', location: { spreadsheet: true } } } },
+    ];
   };
 
   const callBatch = async (requests, options) => {
@@ -296,7 +347,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     return parsed;
   };
 
-  const list = async () => {
+  const listState = async () => {
     const snapshot = await readSnapshot();
     validateActiveRows(snapshot.values);
     const orders = [];
@@ -304,10 +355,12 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       if (!isOrderRow(snapshot.values[index])) continue;
       orders.push(await parseOrderRow(snapshot.values[index]));
     }
-    return orders;
+    return { orders, writeVersion: versionFrom(snapshot.metadata) };
   };
 
-  const execute = async ({ kind, requestId, orderId, expectedRevision, order }) => {
+  const list = async () => (await listState()).orders;
+
+  const execute = async ({ kind, requestId, orderId, expectedRevision, order, writeVersion }) => {
     validateRequest(requestId, kind, orderId, expectedRevision);
     let validOrder = order;
     try {
@@ -321,7 +374,11 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     }
     const metadataState = await readMetadata();
     const existing = await findCompletion(metadataState.metadata, requestId, kind, orderId, expectedRevision, validOrder);
-    if (existing) return replay(existing, kind, orderId);
+    if (existing) {
+      if (existing.sequence !== undefined && existing.sequence !== writeVersion + 1) fail('REQUEST_EXPIRED', 409);
+      return replay(existing, kind, orderId);
+    }
+    if (!Number.isSafeInteger(writeVersion) || writeVersion < 0 || writeVersion !== versionFrom(metadataState.metadata)) fail('REQUEST_EXPIRED', 409);
 
     const owner = await acquireLock(metadataState.metadata);
     let mutationSent = false;
@@ -331,9 +388,11 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       // Another attempt may have committed between the first read and acquiring the lock.
       const completedWhileWaiting = await findCompletion(snapshot.metadata, requestId, kind, orderId, expectedRevision, validOrder);
       if (completedWhileWaiting) {
+        if (completedWhileWaiting.sequence !== undefined && completedWhileWaiting.sequence !== writeVersion + 1) fail('REQUEST_EXPIRED', 409);
         await releaseLock(owner);
         return replay(completedWhileWaiting, kind, orderId);
       }
+      if (versionFrom(snapshot.metadata) !== writeVersion) fail('REQUEST_EXPIRED', 409);
       validateActiveRows(snapshot.values);
       let rowIndex;
       let id;
@@ -362,22 +421,14 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
           revision = await computeOrderRevision(rawFromCells(cells));
         }
       }
-      const record = await completionRecord(requestId, kind, id, orderId, expectedRevision, validOrder, revision);
-      const completion = {
-        createDeveloperMetadata: {
-          developerMetadata: {
-            metadataKey: COMPLETION_METADATA_KEY,
-            metadataValue: JSON.stringify(record),
-            visibility: 'PROJECT',
-            location: { spreadsheet: true },
-          },
-        },
-      };
+      const record = { ...await completionRecord(requestId, kind, id, orderId, expectedRevision, validOrder, revision),
+        sequence: writeVersion + 1, state: 'completed' };
+      const advance = advanceRequests(snapshot.metadata, record);
       mutationSent = true;
       const committed = await callBatch([
         updateCells(rowIndex, cells, snapshot.sheet.sheetId),
         ...dateFormatRequests(rowIndex, snapshot.sheet.sheetId),
-        completion,
+        ...advance,
         deleteLockRequest(owner),
       ], {
         responseRanges: [`'${expectedTitle}'!A${rowIndex + 1}:M${rowIndex + 1}`],
@@ -385,6 +436,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       });
       if (committed?.spreadsheetId && committed.spreadsheetId !== spreadsheetId) fail('SERVICE_UNAVAILABLE');
       const after = gridSnapshot(committed?.updatedSpreadsheet, rowIndex, rowIndex + 1, true);
+      if (versionFrom(after.metadata) !== record.sequence || recordsFrom(after.metadata).length > 3) fail('SERVICE_UNAVAILABLE');
       const confirmations = recordsFrom(after.metadata).filter(item => item.record.requestIdHash === record.requestIdHash);
       if (confirmations.length !== 1 || Object.keys(record).some(key => confirmations[0].record[key] !== record[key])) fail('SERVICE_UNAVAILABLE');
       if ((after.metadata.developerMetadata || []).some(item => item.metadataId === LOCK_METADATA_ID && item.metadataValue === owner)) fail('SERVICE_UNAVAILABLE');
@@ -401,6 +453,49 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       if (error instanceof OrderServerError) throw error;
       if (mutationSent) fail('SERVICE_UNAVAILABLE');
       mapExternalError(error);
+    }
+  };
+
+  const confirm = async ({ requestId, kind, orderId = '', writeVersion }) => {
+    if (typeof requestId !== 'string' || !REQUEST_ID.test(requestId) || !['create', 'update', 'delete'].includes(kind)
+      || (kind === 'create' ? orderId !== '' : !ID.test(orderId))
+      || !Number.isSafeInteger(writeVersion) || writeVersion < 0) fail('VALIDATION_ERROR', 422);
+    const requestIdHash = await hashText(requestId);
+    const inspect = async metadata => {
+      const matches = recordsFrom(metadata).filter(m => m.record.requestIdHash === requestIdHash);
+      if (matches.length > 1) fail('SERVICE_UNAVAILABLE');
+      const record = matches[0]?.record;
+      if (record) {
+        if (record.kindHash !== await hashText(kind) || (kind !== 'create' && record.orderIdHash !== await hashText(orderId))
+          || record.sequence !== writeVersion + 1) fail('REQUEST_EXPIRED', 409);
+        return { state: record.state, writeVersion: versionFrom(metadata) };
+      }
+      if (writeVersion !== versionFrom(metadata)) return { state: 'expired', writeVersion: versionFrom(metadata) };
+      return null;
+    };
+    const initial = await readMetadata();
+    const known = await inspect(initial.metadata);
+    if (known) return known;
+    const owner = await acquireLock(initial.metadata);
+    let sent = false;
+    try {
+      const locked = await readMetadata();
+      assertOwnedLock(locked.metadata, owner);
+      const resolved = await inspect(locked.metadata);
+      if (resolved) { await releaseLock(owner); return resolved; }
+      const record = { ...await completionRecord(requestId, kind, orderId, orderId, '', null, ''),
+        sequence: writeVersion + 1, state: 'not_applied' };
+      const requests = advanceRequests(locked.metadata, record);
+      sent = true;
+      await callBatch([...requests, deleteLockRequest(owner)]);
+      // A lost confirmation response is safe: the bounded cancellation receipt replays it.
+      const after = await readMetadata();
+      const result = await inspect(after.metadata);
+      if (result?.state !== 'not_applied' || (after.metadata.developerMetadata || []).some(m => m.metadataId === LOCK_METADATA_ID)) fail('SERVICE_UNAVAILABLE');
+      return result;
+    } catch (error) {
+      if (!sent) await releaseLock(owner);
+      throw error;
     }
   };
 
@@ -442,9 +537,11 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
 
   return {
     list,
-    create: (order, requestId) => execute({ kind: 'create', requestId, order }),
-    update: (orderId, order, expectedRevision, requestId) => execute({ kind: 'update', requestId, orderId, expectedRevision, order }),
-    remove: (orderId, expectedRevision, requestId) => execute({ kind: 'delete', requestId, orderId, expectedRevision }),
+    listState,
+    confirm,
+    create: (order, requestId, writeVersion) => execute({ kind: 'create', requestId, order, writeVersion }),
+    update: (orderId, order, expectedRevision, requestId, writeVersion) => execute({ kind: 'update', requestId, orderId, expectedRevision, order, writeVersion }),
+    remove: (orderId, expectedRevision, requestId, writeVersion) => execute({ kind: 'delete', requestId, orderId, expectedRevision, writeVersion }),
     ensureIds,
   };
 }

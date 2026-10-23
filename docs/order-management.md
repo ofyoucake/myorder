@@ -29,6 +29,10 @@ Unknown outcomes never automatically steal or expire a lock. An abandoned lock
 requires inspection before recovery; do not delete it blindly or resubmit with a new key.
 The frontend freezes the submitted payload during unknown-result recovery.
 
+The owner-approved v2 recovery change bounds terminal receipts to three and adds
+a document version fence and same-tab reload guard. Its activation/rollback rules
+override the original rollout notes below; see [order-recovery.md](order-recovery.md).
+
 This lock cannot stop the spreadsheet owner from manually changing cells.
 The user explicitly agreed: **do not manually edit or sort the sheet while a website
 save is in progress**. Sorting between saves is supported; always include L with the

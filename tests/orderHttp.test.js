@@ -21,6 +21,8 @@ function harness() {
       calls.push(['store', options]);
       return {
         list: async () => [{ id }],
+        listState: async () => ({ orders: [{ id }], writeVersion: 7 }),
+        confirm: async value => { calls.push(['confirm', value]); return { state: 'not_applied', writeVersion: 8 }; },
         create: async (...args) => { calls.push(['create', ...args]); return { id }; },
         update: async (...args) => { calls.push(['update', ...args]); return { id }; },
         remove: async (...args) => { calls.push(['remove', ...args]); return id; },
@@ -62,7 +64,7 @@ test('read is read-only and production/test targets are fixed server constants',
   const h = harness();
   const response = await handleOrdersRequest({ request: make(), env }, h.dependencies);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { orders: [{ id }] });
+  assert.deepEqual(await response.json(), { orders: [{ id }], writeVersion: 7 });
   assert.equal(h.calls.find(c => c[0] === 'client')[1].readOnly, true);
   const productionId = h.calls.find(c => c[0] === 'store')[1].spreadsheetId;
   const isolated = harness();
@@ -72,11 +74,24 @@ test('read is read-only and production/test targets are fixed server constants',
   assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
 });
 
+test('confirmation is owner-only same-origin, accepts only a PII-free intent and cannot choose a sheet', async () => {
+  const intent = { requestId, kind: 'create', orderId: '', writeVersion: 7 };
+  const h = harness();
+  const result = await handleOrdersRequest({ request: make('POST', intent), env, params: { id: 'confirm' } }, h.dependencies);
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { state: 'not_applied', writeVersion: 8 });
+  assert.deepEqual(h.calls.find(c => c[0] === 'confirm')[1], intent);
+  for (const body of [{ ...intent, order }, { ...intent, writeVersion: -1 }, { ...intent, kind: 'bad' }, { ...intent, orderId: id }]) {
+    const invalid = await handleOrdersRequest({ request: make('POST', body), env, params: { id: 'confirm' } }, harness().dependencies);
+    assert.equal(invalid.status, 422);
+  }
+});
+
 test('create edit and delete use their exact stable-ID contract, never row numbers', async () => {
   const h = harness();
   let response = await handleOrdersRequest({ request: make('POST', { order, requestId }), env }, h.dependencies);
   assert.equal(response.status, 201);
-  assert.deepEqual(h.calls.find(c => c[0] === 'create').slice(1), [order, requestId]);
+  assert.deepEqual(h.calls.find(c => c[0] === 'create').slice(1), [order, requestId, undefined]);
   response = await handleOrdersRequest({ request: make('PATCH', { order, requestId, expectedRevision: 'a'.repeat(64) }), env, params: { id } }, h.dependencies);
   assert.equal(response.status, 200);
   assert.equal(h.calls.find(c => c[0] === 'update')[1], id);

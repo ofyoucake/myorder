@@ -76,11 +76,19 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
     if (request.updateCells) applyUpdate(request);
     if (request.deleteDeveloperMetadata) {
       const lookup = request.deleteDeveloperMetadata.dataFilter.developerMetadataLookup;
-      assert.equal(lookup.metadataKey, LOCK_METADATA_KEY);
-      assert.match(lookup.metadataValue, /^[0-9a-f-]{36}$/);
+      assert.ok([LOCK_METADATA_KEY, COMPLETION_METADATA_KEY, 'myorder.orderStore.version.v2'].includes(lookup.metadataKey));
+      if (lookup.metadataId === undefined) {
+        assert.equal(lookup.metadataKey, COMPLETION_METADATA_KEY);
+        assert.equal(lookup.visibility, 'PROJECT');
+        assert.equal(lookup.locationType, 'SPREADSHEET');
+        for (let index = metadata.length - 1; index >= 0; index--) if (metadata[index].metadataKey === lookup.metadataKey) metadata.splice(index, 1);
+        return;
+      }
       const id = lookup.metadataId;
       const index = metadata.findIndex(item => item.metadataId === id);
       if (index < 0) throw new Error('metadata missing');
+      assert.equal(metadata[index].metadataKey, lookup.metadataKey);
+      assert.equal(metadata[index].metadataValue, lookup.metadataValue);
       metadata.splice(index, 1);
     }
   };
@@ -162,10 +170,141 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
   };
 }
 
-const storeFor = (client, spreadsheetId = TEST_SPREADSHEET_ID) => createOrderStore({ client, spreadsheetId });
+// Existing behavioral scenarios now freeze a server version per intent, like the UI.
+const intentVersions = new WeakMap();
+const storeFor = (client, spreadsheetId = TEST_SPREADSHEET_ID) => {
+  const store = createOrderStore({ client, spreadsheetId });
+  if (!intentVersions.has(client)) intentVersions.set(client, new Map());
+  const versions = intentVersions.get(client);
+  const version = requestId => {
+    if (!versions.has(requestId)) versions.set(requestId, Number(client.state.metadata.find(m => m.metadataKey === 'myorder.orderStore.version.v2')?.metadataValue || 0));
+    return versions.get(requestId);
+  };
+  return { ...store,
+    create: (input, requestId) => store.create(input, requestId, version(requestId)),
+    update: (id, input, revision, requestId) => store.update(id, input, revision, requestId, version(requestId)),
+    remove: (id, revision, requestId) => store.remove(id, revision, requestId, version(requestId)),
+  };
+};
 
 test('rejects unvalidated targets and never accepts arbitrary spreadsheet IDs', () => {
   assert.throws(() => createOrderStore({ client: {}, spreadsheetId: 'attacker-sheet' }), /SERVICE_UNAVAILABLE/);
+});
+
+test('keeps only three completion receipts and refuses a pruned request without another reservation write', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  assert.equal((await store.listState()).writeVersion, 0);
+  for (let version = 0; version < 5; version++) {
+    await store.create(order(`bounded-${version}`), `bounded-${version}`, version);
+  }
+  const receipts = client.state.metadata.filter(m => m.metadataKey === COMPLETION_METADATA_KEY);
+  assert.equal(receipts.length, 3);
+  assert.deepEqual(receipts.map(m => JSON.parse(m.metadataValue).sequence), [3, 4, 5]);
+  const before = client.state;
+  await assert.rejects(store.create(order('bounded-0'), 'bounded-0', 0), e => e.code === 'REQUEST_EXPIRED');
+  assert.deepEqual(client.state, before);
+  assert.equal((await store.listState()).orders.length, 5);
+});
+
+test('confirmation fences a late original request and can itself be retried after its response is lost', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  const intent = { kind: 'create', requestId: 'late-original', writeVersion: 0, orderId: '' };
+  assert.equal((await store.confirm(intent)).state, 'not_applied');
+  await assert.rejects(store.create(order('late'), intent.requestId, 0), e => e.code === 'REQUEST_CANCELLED');
+  assert.equal((await store.confirm(intent)).state, 'not_applied');
+  assert.equal((await store.list()).length, 0);
+});
+
+test('confirmation recognizes an already completed intent even if the order subsequently changed', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  const created = await store.create(order('original'), 'confirm-create', 0);
+  await store.update(created.id, order('changed'), created.revision, 'confirm-update', 1);
+  assert.equal((await store.confirm({ kind: 'create', requestId: 'confirm-create', writeVersion: 0, orderId: '' })).state, 'completed');
+  assert.equal((await store.list()).length, 1);
+});
+
+test('lost cancellation responses replay proof; neither lost confirmation nor a stale device can write later', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  const send = client.batchUpdate;
+  let lose = true;
+  client.batchUpdate = async (...args) => {
+    const result = await send(...args);
+    if (lose && args[1].some(r => r.createDeveloperMetadata?.developerMetadata.metadataKey === COMPLETION_METADATA_KEY)) {
+      lose = false;
+      throw new Error('confirmation response lost');
+    }
+    return result;
+  };
+  const descriptor = { kind: 'create', requestId: 'lost-confirm', orderId: '', writeVersion: 0 };
+  await assert.rejects(store.confirm(descriptor));
+  const calls = client.batches.length;
+  assert.equal((await store.confirm(descriptor)).state, 'not_applied');
+  assert.equal(client.batches.length, calls);
+  await assert.rejects(store.create(order('late'), descriptor.requestId, 0), e => e.code === 'REQUEST_CANCELLED');
+  await assert.rejects(store.create(order('unversioned'), 'old-tab'), e => e.code === 'REQUEST_EXPIRED');
+  assert.equal((await store.list()).length, 0);
+});
+
+test('legacy receipts migrate atomically with bounded batch size; history stays bounded over 100 edits', async () => {
+  const client = createFakeClient();
+  // Legacy fixtures use the old five-hash record shape, with no version or sequence.
+  const legacy = Object.fromEntries(['requestIdHash', 'requestHash', 'kindHash', 'orderIdHash', 'revisionHash'].map(k => [k, 'a'.repeat(64)]));
+  await client.batchUpdate(TEST_SPREADSHEET_ID, Array.from({ length: 100 }, () => ({ createDeveloperMetadata: { developerMetadata: {
+    metadataKey: COMPLETION_METADATA_KEY, metadataValue: JSON.stringify(legacy), location: { spreadsheet: true }, visibility: 'PROJECT',
+  } } })));
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  let saved = await store.create(order('migration'), 'migration', 0);
+  assert.ok(client.batches.at(-1).length <= 10);
+  for (let version = 1; version <= 100; version++) {
+    saved = await store.update(saved.id, order(`edit-${version}`), saved.revision, `edit-${version}`, version);
+    assert.ok(client.state.metadata.filter(m => m.metadataKey === COMPLETION_METADATA_KEY).length <= 3);
+    assert.ok(client.batches.at(-1).length <= 10);
+  }
+  const occupied = client.state.grid.filter(row => row[11] === saved.id);
+  assert.equal(occupied.length, 1);
+  assert.equal((await store.listState()).writeVersion, 101);
+  assert.equal(client.state.metadata.filter(m => m.metadataKey === COMPLETION_METADATA_KEY).length, 3);
+  assert.equal((await store.confirm({ kind: 'create', requestId: 'migration', orderId: '', writeVersion: 0 })).state, 'expired');
+});
+
+test('a versioned writer paused before lock acquisition is fenced by confirmation', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  const read = client.getSpreadsheet;
+  let unblock;
+  let paused;
+  const gate = new Promise(resolve => { unblock = resolve; });
+  const ready = new Promise(resolve => { paused = resolve; });
+  let first = true;
+  client.getSpreadsheet = async (...args) => {
+    const result = await read(...args);
+    if (first) { first = false; paused(); await gate; }
+    return result;
+  };
+  const original = store.create(order('delayed'), 'delayed', 0);
+  await ready;
+  assert.equal((await store.confirm({ requestId: 'delayed', kind: 'create', orderId: '', writeVersion: 0 })).state, 'not_applied');
+  unblock();
+  await assert.rejects(original, e => ['REQUEST_CANCELLED', 'REQUEST_EXPIRED'].includes(e.code));
+  assert.equal((await store.list()).length, 0);
+  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), false);
+});
+
+test('a missing version beside versioned receipts never resets the generation to zero', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  await store.create(order('first'), 'first', 0);
+  const read = client.getSpreadsheet;
+  client.getSpreadsheet = async (...args) => {
+    const result = await read(...args);
+    result.developerMetadata = result.developerMetadata.filter(m => m.metadataKey !== 'myorder.orderStore.version.v2');
+    return result;
+  };
+  await assert.rejects(store.listState(), e => e.code === 'SERVICE_UNAVAILABLE');
 });
 
 test('normal create edit delete use four Sheets calls and a bounded write response', async () => {
@@ -328,7 +467,7 @@ test('malformed or contradictory commit evidence never reports success or repeat
   for (const corrupt of [
     result => { delete result.updatedSpreadsheet.sheets[0].data; },
     result => { result.updatedSpreadsheet.sheets[0].data[0].rowData[0].values[11].effectiveValue.stringValue = ID_2; },
-    result => { result.updatedSpreadsheet.developerMetadata[0].metadataValue = result.updatedSpreadsheet.developerMetadata[0].metadataValue.replace(/"requestHash":"[a-f0-9]+"/, `"requestHash":"${'f'.repeat(64)}"`); },
+    result => { const receipt = result.updatedSpreadsheet.developerMetadata.find(m => m.metadataKey === COMPLETION_METADATA_KEY); receipt.metadataValue = receipt.metadataValue.replace(/"requestHash":"[a-f0-9]+"/, `"requestHash":"${'f'.repeat(64)}"`); },
     (result, client) => { result.updatedSpreadsheet.developerMetadata.push(clone(client.batches[0][0].createDeveloperMetadata.developerMetadata)); },
   ]) {
     const client = createFakeClient();
