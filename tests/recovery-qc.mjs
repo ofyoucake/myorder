@@ -66,6 +66,13 @@ async function until(expression) {
   }
   throw new Error(`UI condition timed out: ${expression}`);
 }
+async function reloadDocument() {
+  const previousOrigin = await evaluate('performance.timeOrigin');
+  await send('Page.reload', {}, sessionId);
+  // Page.reload can acknowledge before the old document disappears. Never let
+  // its still-enabled recovery button satisfy the new-document readiness check.
+  await until(`performance.timeOrigin !== ${previousOrigin} && document.readyState === 'complete'`);
+}
 async function capture(name) {
   assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true, `${name}: page must fit viewport`);
   if (await evaluate("Boolean(document.querySelector('.order-recovery'))")) {
@@ -120,7 +127,7 @@ try {
   await startOrder('새로고침 전 실패 QC');
   await submitWithFault('Request');
   const beforeReload = businessSends;
-  await send('Page.reload', {}, sessionId);
+  await reloadDocument();
   await until(`${button('처리 결과 확인')} && !${button('처리 결과 확인')}.disabled`);
   assert.equal(await evaluate(`Boolean(${button('주문 등록')})`), false);
   assert.equal(await evaluate(`document.body.textContent.includes('새로고침 전 실패 QC')`), false, 'customer input must not survive reload');
@@ -134,7 +141,7 @@ try {
   await startOrder('새로고침 후 완료 확인 QC');
   await submitWithFault('Response');
   const savedBeforeReload = businessSends;
-  await send('Page.reload', {}, sessionId);
+  await reloadDocument();
   await until(`${button('처리 결과 확인')} && !${button('처리 결과 확인')}.disabled`);
   await click('처리 결과 확인');
   await until(`document.body.textContent.includes('이전 작업이 정상 완료')`);
