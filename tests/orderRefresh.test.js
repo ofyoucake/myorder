@@ -1,0 +1,52 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { subscribeOrderRefresh } from '../src/orderRefresh.js';
+
+test('foreground refresh is coalesced, skips pending work and cleans up listeners', async () => {
+  const doc = new EventTarget();
+  const win = new EventTarget();
+  doc.hidden = false;
+  let locked = false;
+  let calls = 0;
+  let release;
+  const cleanup = subscribeOrderRefresh({ document: doc, window: win, canRefresh: () => !locked, refresh: () => { calls++; return new Promise(resolve => { release = resolve; }); } });
+  assert.equal(calls, 0, 'no extra mount request');
+  doc.dispatchEvent(new Event('visibilitychange'));
+  win.dispatchEvent(new Event('online'));
+  assert.equal(calls, 1);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(calls, 2, 'events during an older read get one trailing fresh read');
+  release();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  locked = true;
+  doc.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(calls, 2);
+  locked = false;
+  doc.hidden = true;
+  doc.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(calls, 2);
+  cleanup();
+  win.dispatchEvent(new Event('online'));
+  assert.equal(calls, 2);
+});
+
+test('a queued return-to-foreground read rechecks the pending guard before running', async () => {
+  const doc = new EventTarget();
+  const win = new EventTarget();
+  doc.hidden = false;
+  let locked = false;
+  let calls = 0;
+  let release;
+  const cleanup = subscribeOrderRefresh({ document: doc, window: win, canRefresh: () => !locked, refresh: () => { calls++; return new Promise(resolve => { release = resolve; }); } });
+  doc.dispatchEvent(new Event('visibilitychange'));
+  doc.hidden = true;
+  doc.dispatchEvent(new Event('visibilitychange'));
+  doc.hidden = false;
+  doc.dispatchEvent(new Event('visibilitychange'));
+  locked = true;
+  release();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(calls, 1, 'do not run a queued read after a write becomes pending');
+  cleanup();
+});

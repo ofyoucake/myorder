@@ -424,3 +424,24 @@
     transition: none;
   }
 }
+
+.order-conflict {
+  margin-bottom: 24px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-main);
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.order-conflict h3 { margin: 0 0 8px; font-size: 15px; }
+.order-conflict p { margin: 8px 0; }
+.order-conflict__field { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.order-conflict__field legend { padding: 0 4px; font-weight: 700; }
+.order-conflict__field label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; cursor: pointer; }
+.order-conflict__field input { margin-top: 5px; flex-shrink: 0; accent-color: var(--point-dark); }
+.order-conflict__value { display: block; white-space: pre-wrap; }
+.order-conflict .order-form__button { margin-top: 8px; max-width: 100%; }

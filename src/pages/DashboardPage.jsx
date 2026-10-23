@@ -6,6 +6,7 @@ import OrderFormModal from '../components/OrderFormModal';
 import OrderDetailModal, { OrderDeleteModal } from '../components/OrderDetailModal';
 import { canManageOrder, createOrdersClient, isUnknownWriteError } from '../api/orders';
 import { createRecoveryJournal } from '../orderRecovery';
+import { subscribeOrderRefresh } from '../orderRefresh';
 import { supabase } from '../supabaseClient';
 import Papa from 'papaparse';
 import { ORDER_TEXT_FIELDS, preserveOrderText, groupOrderText, matchesOrderFilters } from '../orderText';
@@ -16,6 +17,7 @@ const ORDER_API_ENABLED = isTestPage || import.meta.env.VITE_ORDER_API_ENABLED =
 const ORDER_API_BASE_PATH = isTestPage ? '/api/order-tests' : '/api/orders';
 const DEFINITIVE_NON_WRITE_CODES = new Set([
   'AUTH_REQUIRED',
+  'AUTH_UNAVAILABLE',
   'FORBIDDEN',
   'CONFLICT',
   'NOT_FOUND',
@@ -29,7 +31,7 @@ const ordersClient = createOrdersClient({
   basePath: ORDER_API_BASE_PATH,
   getAccessToken: async () => {
     const { data, error } = await supabase.auth.getSession();
-    if (error) return null;
+    if (error) throw error;
     return data.session?.access_token;
   },
 });
@@ -98,6 +100,7 @@ const DashboardPage = ({ session, onLogout }) => {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [copiedType, setCopiedType] = useState(null);
   const [orderEditor, setOrderEditor] = useState(null);
+  const [editorConflict, setEditorConflict] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState('');
@@ -115,6 +118,9 @@ const DashboardPage = ({ session, onLogout }) => {
   const [loadError, setLoadError] = useState('');
   const mutationLock = useRef(false);
   const loadSequence = useRef(0);
+  const latestOrders = useRef([]);
+  const conflictSequence = useRef(0);
+  const normalLoads = useRef(0);
 
   // Database Sync
   const [sheetInfo, setSheetInfo] = useState('');
@@ -169,18 +175,25 @@ const DashboardPage = ({ session, onLogout }) => {
     finally { setLoading(false); }
   };
 
-  const loadSheetData = useCallback(async (info) => {
+  const loadSheetData = useCallback(async (info, quiet = false, recoveryRead = false) => {
     if (!ORDER_API_ENABLED && !info) return;
+    if (quiet && (normalLoads.current || mutationLock.current || recoveryJournal.read())) return false;
+    if (!quiet) normalLoads.current++;
     const sequence = ++loadSequence.current;
-    setLoading(true);
-    setLoadError('');
+    if (!quiet) { setLoading(true); setLoadError(''); }
     try {
       if (ORDER_API_ENABLED) {
-        const latestOrders = await ordersClient.list();
-        if (sequence === loadSequence.current) {
-          setOrders(latestOrders.map(order => ({ ...order, time: order.pickupDate.split(' ')[1] || '00:00', dateOnly: normalizeDateKey(order.pickupDate.split(' ')[0]) })));
+        const loadedOrders = await ordersClient.list({ synchronize: !quiet && !recoveryRead,
+          canPublish: () => sequence === loadSequence.current && (!quiet || (!mutationLock.current && !recoveryJournal.read())),
+        });
+        if (sequence === loadSequence.current && (!quiet || (!mutationLock.current && !recoveryJournal.read()))) {
+          latestOrders.current = loadedOrders;
+          setOrders(loadedOrders.map(order => ({ ...order, time: order.pickupDate.split(' ')[1] || '00:00', dateOnly: normalizeDateKey(order.pickupDate.split(' ')[0]) })));
+          setSelectedOrder(current => current ? loadedOrders.find(order => order.id === current.id) || null : null);
+          setLoadError('');
+          return true;
         }
-        return true;
+        return false;
       }
       let sheetId = info;
       if (info.includes('/d/')) sheetId = info.split('/d/')[1].split('/')[0];
@@ -225,17 +238,29 @@ const DashboardPage = ({ session, onLogout }) => {
         }
       });
     } catch (error) {
-      if (sequence === loadSequence.current) {
+      if (!quiet && sequence === loadSequence.current) {
         setLoadError(ORDER_API_ENABLED ? error.message : '시트를 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해주세요.');
       }
       return false;
     } finally {
-      if (sequence === loadSequence.current) setLoading(false);
+      if (!quiet) normalLoads.current--;
+      if (!quiet && sequence === loadSequence.current) setLoading(false);
     }
-  }, []);
+  }, [recoveryJournal]);
 
   const sheetDataSource = ORDER_API_ENABLED ? null : sheetInfo;
   useEffect(() => { loadSheetData(sheetDataSource); }, [sheetDataSource, loadSheetData]);
+
+  useEffect(() => () => { ++loadSequence.current; ++conflictSequence.current; }, []);
+
+  useEffect(() => {
+    if (!ORDER_API_ENABLED) return;
+    return subscribeOrderRefresh({
+      document, window,
+      canRefresh: () => !normalLoads.current && !mutationLock.current && !recoveryJournal.read(),
+      refresh: () => loadSheetData(sheetDataSource, true),
+    });
+  }, [recoveryJournal, sheetDataSource, loadSheetData]);
 
   const handleOrderClick = (order) => { 
     setSelectedOrder(order); 
@@ -247,6 +272,8 @@ const DashboardPage = ({ session, onLogout }) => {
     if (mutationLock.current || pendingMutation) return;
     setMutationError('');
     setOrderFeedback('');
+    setEditorConflict(null);
+    ++conflictSequence.current;
     setShowDetailModal(false);
     setOrderEditor({ order, requestId: crypto.randomUUID(), editorKey: crypto.randomUUID() });
   };
@@ -255,8 +282,39 @@ const DashboardPage = ({ session, onLogout }) => {
     if (mutationLock.current || pendingMutation) return;
     const editing = orderEditor?.order;
     setOrderEditor(null);
+    setEditorConflict(null);
+    ++conflictSequence.current;
     setMutationError('');
     if (editing) setShowDetailModal(true);
+  };
+
+  const inspectEditorConflict = async (order, requiresAck = false) => {
+    const sequence = ++conflictSequence.current;
+    setEditorConflict({ checked: false, requiresAck });
+    // This is an explicit recovery read, allowed while its own guard is pending.
+    const checked = await loadSheetData(sheetDataSource, false, true);
+    if (sequence === conflictSequence.current) setEditorConflict({ checked, requiresAck, latest: checked ? latestOrders.current.find(item => item.id === order.id) || null : null });
+    return checked;
+  };
+
+  const resolveEditorConflict = input => {
+    if (mutationLock.current || !editorConflict?.checked) return;
+    if (pendingMutation && (!pendingMutation.reviewRequired || !editorConflict.requiresAck)) return;
+    try {
+      if (editorConflict.requiresAck) recoveryJournal.clear();
+      setPendingMutation(null);
+      setReviewReady(false);
+      setMutationError('');
+      setEditorConflict(null);
+      ++conflictSequence.current;
+      if (!editorConflict.latest) {
+        setOrderEditor(null);
+        setSelectedOrder(null);
+        setShowDetailModal(false);
+        return;
+      }
+      setOrderEditor({ order: editorConflict.latest, draft: input, requestId: crypto.randomUUID(), editorKey: crypto.randomUUID() });
+    } catch { setEditorConflict(current => current ? { ...current, actionError: '복구 정보를 정리하지 못했습니다. 저장소 설정을 확인한 뒤 다시 시도해주세요.' } : current); }
   };
 
   const performIntent = async intent => {
@@ -305,11 +363,14 @@ const DashboardPage = ({ session, onLogout }) => {
       setActiveTab('day');
       setOrderFeedback(intent.kind === 'update' ? '주문을 수정했습니다.' : '주문을 등록했습니다.');
       setOrderEditor(null);
+      setEditorConflict(null);
       setShowDetailModal(true);
     } catch (error) {
       if (isUnknownWriteError(error) || (sent && !DEFINITIVE_NON_WRITE_CODES.has(error.code))) {
         setPendingMutation(intent);
-        setMutationError(UNKNOWN_WRITE_MESSAGE);
+        setMutationError(error.code === 'REQUEST_EXPIRED'
+          ? '주문 목록의 버전이 변경되었습니다. 입력 내용은 유지됩니다. ‘처리 결과 확인’으로 현재 주문을 확인해주세요.'
+          : UNKNOWN_WRITE_MESSAGE);
       } else {
         try {
           recoveryJournal.clear();
@@ -317,7 +378,9 @@ const DashboardPage = ({ session, onLogout }) => {
           setMutationError(error.code ? error.message : '브라우저의 복구 정보 저장소를 사용할 수 없어 전송하지 않았습니다. 저장소 설정을 확인해주세요.');
           setOrderEditor(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
           setDeleteTarget(current => current ? { ...current, requestId: crypto.randomUUID() } : current);
-          if (sent) await loadSheetData(sheetDataSource);
+          if (sent && intent.kind === 'update' && ['CONFLICT', 'NOT_FOUND'].includes(error.code)) {
+            await inspectEditorConflict(intent.order);
+          } else if (sent && error.code !== 'AUTH_UNAVAILABLE') await loadSheetData(sheetDataSource);
         } catch {
           setPendingMutation({ ...intent, recovered: true });
           setMutationError('복구 정보를 정리하지 못했습니다. 새 작업을 중지하고 저장소 설정을 확인해주세요.');
@@ -354,6 +417,12 @@ const DashboardPage = ({ session, onLogout }) => {
         // Confirmation fenced the original request: only now may a fresh attempt be issued.
         recoveryJournal.clear();
         await performIntent({ ...pendingMutation, requestId: crypto.randomUUID(), writeVersion: result.writeVersion });
+        return;
+      }
+      if (result.state === 'expired' && orderEditor && pendingMutation.kind === 'update' && !pendingMutation.recovered) {
+        setPendingMutation({ ...pendingMutation, reviewRequired: true });
+        setMutationError('이전 요청의 결과를 확정할 수 없습니다. 현재 주문과 작성 내용을 비교한 뒤 편집을 계속해주세요. 자동으로 재저장하지 않습니다.');
+        await inspectEditorConflict(pendingMutation.order, true);
         return;
       }
       setOrderEditor(null);
@@ -1076,6 +1145,10 @@ const DashboardPage = ({ session, onLogout }) => {
           <OrderFormModal
             key={orderEditor.editorKey}
             initialOrder={orderEditor.order}
+            initialInput={orderEditor.draft}
+            conflict={editorConflict}
+            onResolveConflict={resolveEditorConflict}
+            onReloadConflict={() => inspectEditorConflict(orderEditor.order, editorConflict?.requiresAck)}
             defaultDate={orderEditor.order ? getKSTDateKey() : selectedDate}
             options={Object.fromEntries(['design', 'flavor', 'sheet', 'size', 'cream', 'orderPath'].map(field => [field, [...new Set(orders.map(order => order[field]).filter(value => value && value !== '-'))]]))}
             onSave={saveOrder}

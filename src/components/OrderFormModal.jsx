@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import './OrderFormModal.css';
+import OrderConflictPanel from './OrderConflictPanel';
 
 const FIELD_META = {
   design: { label: '디자인', optionKey: 'design' },
@@ -97,7 +98,7 @@ const getFocusableElements = (container) => {
     container.querySelectorAll(
       'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ),
-  );
+  ).filter(element => !element.matches(':disabled'));
 };
 
 const isValidDateInput = (value) => {
@@ -112,8 +113,19 @@ const isValidDateInput = (value) => {
 
 const isValidTimeInput = (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 
+const toOrderInput = form => ({
+  customer: form.customer, design: form.design, orderDate: normalizeDateForSave(form.orderDate),
+  pickupDate: form.pickupDate ? `${normalizeDateForSave(form.pickupDate)} ${form.pickupTime}` : '',
+  flavor: form.flavor, sheet: form.sheet, size: form.size, cream: form.cream,
+  requests: form.requests, specialNotes: form.specialNotes, orderPath: form.orderPath,
+});
+
 export default function OrderFormModal({
   initialOrder = null,
+  initialInput,
+  conflict,
+  onResolveConflict,
+  onReloadConflict,
   defaultDate = '',
   options = {},
   onSave,
@@ -123,7 +135,7 @@ export default function OrderFormModal({
   onRetry,
   error = '',
 }) {
-  const [form, setForm] = useState(() => getInitialState(initialOrder, defaultDate));
+  const [form, setForm] = useState(() => getInitialState(initialInput || initialOrder, defaultDate));
   const [errors, setErrors] = useState({});
   const dialogRef = useRef(null);
   const firstFieldRef = useRef(null);
@@ -168,6 +180,12 @@ export default function OrderFormModal({
 
       const firstElement = focusableElements[0];
       const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (!focusableElements.includes(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? lastElement : firstElement).focus();
+        return;
+      }
 
       if (event.shiftKey && document.activeElement === firstElement) {
         event.preventDefault();
@@ -231,21 +249,9 @@ export default function OrderFormModal({
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (busy || !validate()) return;
+    if (busy || pending || conflict || !validate()) return;
 
-    onSave?.({
-      customer: form.customer,
-      design: form.design,
-      orderDate: normalizeDateForSave(form.orderDate),
-      pickupDate: form.pickupDate ? `${normalizeDateForSave(form.pickupDate)} ${form.pickupTime}` : '',
-      flavor: form.flavor,
-      sheet: form.sheet,
-      size: form.size,
-      cream: form.cream,
-      requests: form.requests,
-      specialNotes: form.specialNotes,
-      orderPath: form.orderPath,
-    });
+    onSave?.(toOrderInput(form));
   };
 
   const renderError = (field) => (
@@ -299,7 +305,7 @@ export default function OrderFormModal({
                 저장 중에는 구글 시트에서 직접 편집하거나 정렬하지 마세요.
               </p>
             )}
-            {pending && (
+            {pending && !conflict?.requiresAck && (
               <button
                 ref={retryRef}
                 className="order-form__button order-form__button--primary"
@@ -323,8 +329,9 @@ export default function OrderFormModal({
         </header>
 
         <form className="order-form__body" onSubmit={handleSubmit} noValidate>
-          <fieldset className="order-form__fieldset" disabled={busy || pending}>
-            {error && <div className="order-form__form-error" role="alert">{error}</div>}
+          {conflict && <OrderConflictPanel key={conflict.latest?.revision || 'unavailable'} original={initialOrder} draft={toOrderInput(form)} conflict={conflict} onResolve={onResolveConflict} onReload={onReloadConflict} busy={busy} />}
+          <fieldset className="order-form__fieldset" disabled={busy || pending || Boolean(conflict)}>
+            {error && !conflict?.checked && <div className="order-form__form-error" role="alert">{error}</div>}
 
             <div className="order-form__section">
               <div className="order-form__section-heading">
@@ -454,7 +461,7 @@ export default function OrderFormModal({
                 <button className="order-form__button order-form__button--secondary" type="button" onClick={() => onCancel?.()} disabled={busy || pending}>
                   취소
                 </button>
-                <button className="order-form__button order-form__button--primary" type="submit">
+                <button className="order-form__button order-form__button--primary" type="submit" disabled={Boolean(conflict)}>
                   {busy ? '저장 중...' : pending ? '입력 잠금됨' : initialOrder ? '변경사항 저장' : '주문 등록'}
                 </button>
               </div>}
