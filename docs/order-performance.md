@@ -47,3 +47,37 @@ uses approximately 437 characters. The user declined the proposed hidden tab.
 An alternative durable receipt design needs agreement before provisioning another
 store. Do not claim this speed change removes the cumulative receipt limit.
 Do not evict receipts or steal abandoned locks to make saves appear successful.
+
+## Live verification, 2026-10-23 (KST)
+
+- Before deployment, production read-only diagnostics reported 1,168 orders,
+  zero missing/duplicate IDs, and readiness passed. Protected A:K/M:W fingerprint:
+  `44b050d91f51acfa3890c1e2774a4e77412ec0ac66ba7c7aa99f95f186f3c4b2`.
+- Baseline source `df1479b`, deployment `db4996ae`: actual isolated UI create
+  4,078 ms, update 3,853 ms, delete 3,196 ms. A prior isolated create was 2,696 ms;
+  its leftover fixture was also removed (3,039 ms). These are individual browser
+  resource timings, not statistically representative latency percentiles.
+- Every fixture was labelled `[테스트 전용·제작 금지]`, dated 2099-01-04,
+  and written only to the fixed isolated document. Baseline cleanup confirmed
+  zero occupied test rows and no test lock.
+- The unused proposed receipt-tab name was removed from the range allowlist;
+  requests for that tab are explicitly rejected by a regression test.
+- Local verification: 91 Node tests pass; changed-file ESLint, production build,
+  `git diff --check`, and production-dependency audit pass (zero vulnerabilities).
+  Existing repository-wide lint and development-dependency findings are separate
+  baseline issues; they were not hidden or suppressed by this change.
+- Improved source `d102460`, successful production deployment `fcbb2802`: same
+  isolated UI flow create 1,824 ms, update 2,153 ms, delete 1,756 ms. Relative to
+  the matched baseline cycle these individual observations are 55%, 44% and 45%
+  faster respectively. This small isolated sheet is not the production dataset;
+  cold starts, Google latency, dataset size and network conditions still vary.
+- Each improved mutation returned HTTP 201/200 with two Sheets reads and two
+  writes in `Server-Timing`; Google token issuance was zero for all three warm
+  saves. Detail values retained `M size`, spaces and multi-line requests.
+- After the improved CRUD cycle, the test document has zero occupied rows and
+  no lock. Production diagnostics again reported 1,168 orders, zero missing or
+  duplicate IDs, readiness passed, and the protected fingerprint above is identical.
+- The temporary `ORDER_ISOLATED_TESTS_ENABLED` setting was removed and saved in
+  Cloudflare Production. The deployment of this verification record applies that
+  cleanup; final release checks must confirm test API 403 and unauthenticated
+  production API 401. No hidden sheet, extra storage or user credential was added.
