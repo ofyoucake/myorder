@@ -348,7 +348,8 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
   };
 
   const listState = async () => {
-    const snapshot = await readSnapshot();
+    // Return data and its version from the same Google response, not two instants.
+    const snapshot = await readBeforeWrite(await readMetadata());
     validateActiveRows(snapshot.values);
     const orders = [];
     for (let index = 1; index < snapshot.values.length; index += 1) {

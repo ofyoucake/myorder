@@ -191,6 +191,22 @@ test('rejects unvalidated targets and never accepts arbitrary spreadsheet IDs', 
   assert.throws(() => createOrderStore({ client: {}, spreadsheetId: 'attacker-sheet' }), /SERVICE_UNAVAILABLE/);
 });
 
+test('list versions match their grid snapshot without reservation or metadata writes', async () => {
+  const client = createFakeClient({ rows: [rawValues(order(), ID)] });
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  const originalGet = client.getSpreadsheet;
+  client.getSpreadsheet = async (...args) => {
+    const state = await originalGet(...args);
+    if (args[2]?.ranges) state.developerMetadata.push({ metadataKey: 'myorder.orderStore.version.v2', metadataId: 2026102302, metadataValue: '1' });
+    return state;
+  };
+  const state = await store.listState();
+  assert.equal(state.writeVersion, 1);
+  assert.deepEqual(client.calls, ['getSpreadsheet', 'getSpreadsheet']);
+  assert.equal(state.orders[0].id, ID);
+  assert.equal(client.batches.length, 0);
+});
+
 test('keeps only three completion receipts and refuses a pruned request without another reservation write', async () => {
   const client = createFakeClient();
   const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });

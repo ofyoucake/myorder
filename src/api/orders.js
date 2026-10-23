@@ -6,6 +6,7 @@ export const ORDER_INPUT_FIELDS = [
 const ORDER_ID = /^ord_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const ERROR_MESSAGES = {
   AUTH_REQUIRED: '로그인이 만료되었습니다. 다시 로그인해주세요.',
+  AUTH_UNAVAILABLE: '로그인 상태를 확인하지 못해 주문을 전송하지 않았습니다. 연결 상태를 확인한 뒤 다시 저장해주세요.',
   FORBIDDEN: '이 계정에는 주문을 관리할 권한이 없습니다.',
   CONFLICT: '시트에서 주문이 변경되었습니다. 최신 내용을 불러온 뒤 다시 수정해주세요.',
   NOT_FOUND: '이 주문이 이미 삭제되었거나 이동되었습니다. 목록을 새로고침해주세요.',
@@ -59,17 +60,23 @@ export function createOrdersClient({
   let writeVersion;
 
   const request = async (path = '', method = 'GET', body) => {
-    let token;
-    try {
-      token = await getAccessToken();
-    } catch {
-      throw new OrderApiError('AUTH_REQUIRED');
-    }
-    if (!token) throw new OrderApiError('AUTH_REQUIRED');
-
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let rejectAuthentication;
+    let authenticating = true;
+    const authenticationDeadline = new Promise((_, reject) => { rejectAuthentication = reject; });
+    const timeout = setTimeout(() => {
+      controller.abort();
+      if (authenticating) rejectAuthentication(new OrderApiError('AUTH_UNAVAILABLE'));
+    }, timeoutMs);
     try {
+      let token;
+      try {
+        token = await Promise.race([Promise.resolve().then(getAccessToken), authenticationDeadline]);
+      } catch {
+        throw new OrderApiError('AUTH_UNAVAILABLE');
+      }
+      authenticating = false;
+      if (!token) throw new OrderApiError('AUTH_REQUIRED');
       const response = await fetchImpl(`${basePath}${path}`, {
         method,
         headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -143,11 +150,13 @@ export function createOrdersClient({
   };
 
   return {
-    async list() {
-      await synchronizeIds();
+    async list({ synchronize = true, canPublish = () => true } = {}) {
+      if (synchronize) await synchronizeIds();
       const result = await request();
       if (!Array.isArray(result?.orders)) throw new OrderApiError('INVALID_RESPONSE');
       const orders = result.orders.map(validateOrder);
+      if (!canPublish()) throw new OrderApiError('ORDER_NOT_READY');
+      if (isNonNegativeInteger(writeVersion) && isNonNegativeInteger(result.writeVersion) && result.writeVersion < writeVersion) throw new OrderApiError('ORDER_NOT_READY');
       // Older read responses may still be displayed, but cannot issue a new intent.
       writeVersion = isNonNegativeInteger(result.writeVersion) ? result.writeVersion : undefined;
       return orders;

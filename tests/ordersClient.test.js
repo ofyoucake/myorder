@@ -7,6 +7,47 @@ const stored = { ...input, id: 'ord_2ef261cb-b840-47ae-b522-5ebf50fa5819', revis
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const idsReady = (orderCount = 0) => json({ assignedCount: 0, orderCount, unchangedOtherColumns: true });
 
+test('authentication has a deadline and cannot send after a late session result', async () => {
+  let resolveToken;
+  let sends = 0;
+  const client = createOrdersClient({ timeoutMs: 10, getAccessToken: () => new Promise(resolve => { resolveToken = resolve; }), fetchImpl: async () => { sends++; return idsReady(); } });
+  const result = await Promise.race([client.list().catch(error => error.code), new Promise(resolve => setTimeout(() => resolve('HUNG'), 100))]);
+  assert.equal(result, 'AUTH_UNAVAILABLE');
+  resolveToken('late-session');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(sends, 0);
+});
+
+test('a delayed older snapshot cannot roll back a newer write version', async () => {
+  let releaseOld;
+  let reads = 0;
+  const client = createOrdersClient({ getAccessToken: async () => 'session-test-token', fetchImpl: async (_url, options) => {
+    if (options.method === 'POST') return idsReady();
+    if (++reads === 1) return new Promise(resolve => { releaseOld = () => resolve(json({ orders: [stored], writeVersion: 4 })); });
+    return json({ orders: [stored], writeVersion: 5 });
+  } });
+  const older = client.list();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await client.list();
+  releaseOld();
+  await assert.rejects(older, error => error.code === 'ORDER_NOT_READY');
+  assert.equal(client.getWriteVersion(), 5);
+});
+
+test('quiet lists never synchronize IDs and obsolete completions cannot publish cache state', async () => {
+  const calls = [];
+  let version = 4;
+  const client = createOrdersClient({ getAccessToken: async () => 'session-test-token', fetchImpl: async (url, options) => {
+    calls.push([url, options.method]);
+    return json({ orders: [stored], writeVersion: version });
+  } });
+  await client.list({ synchronize: false });
+  version = 8;
+  await assert.rejects(client.list({ synchronize: false, canPublish: () => false }), error => error.code === 'ORDER_NOT_READY');
+  assert.equal(client.getWriteVersion(), 4);
+  assert.deepEqual(calls, [['/api/orders', 'GET'], ['/api/orders', 'GET']]);
+});
+
 test('a versioned intent keeps its original version across refreshes and never auto retries', async () => {
   const requests = [];
   let version = 4;
