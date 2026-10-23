@@ -8,7 +8,7 @@ const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_GRID_RESPONSE_BYTES = 4_000_000; // Bounded grid cells carry more JSON overhead than values arrays.
 const MAX_RANGE_ROW = 20_000;
 const MAX_RANGE_COLUMN = 23; // W: production read boundary is A1:W1996; client growth ceiling is 20,000 rows.
-const ALLOWED_QUOTED_SHEET_NAMES = new Set(['주문정보', '테스트_제작금지', '시스템_저장기록']);
+const ALLOWED_QUOTED_SHEET_NAMES = new Set(['주문정보', '테스트_제작금지']);
 const MAX_FIELDS_LENGTH = 512;
 const MAX_BATCH_REQUESTS = 100;
 const defaultFetch = (...args) => globalThis.fetch(...args);
