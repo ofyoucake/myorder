@@ -130,3 +130,56 @@ serial, not the formatted display, so the current compatible data does not need
 a format change. This is not a promise to accept arbitrary text dates: literal
 text input still follows the strict model format. Existing cell formats remain
 untouched by this release.
+
+## Editing reliability follow-up — 2026-10-23
+
+- Editing opens synchronously from the displayed order. There is no new per-editor
+  read or normal-save preflight. Revision/version checks and the three-receipt
+  protocol remain authoritative.
+- Visible `visibilitychange`, persisted `pageshow`, and `online` events quietly
+  reload orders. No interval is installed. Reads are coalesced, with one trailing
+  read for a return/reconnect during an older read. They skip ID synchronization:
+  background work sends GET only, never POST/PATCH/DELETE. Missing IDs therefore
+  require the existing explicit refresh/synchronization flow.
+- A metadata-only freshness check was rejected: manual Sheet edits do not advance
+  the app's version. Full background reads detect those changes as well. They do
+  not show a blocking loader or reset a draft. Guards are checked at dispatch and
+  completion, including before publishing the client's version; obsolete reads
+  cannot publish over a save, pending recovery, or a newer read.
+- Lists pair the version and rows from one Google grid response. Normal list
+  reads remain two Google calls; the four-call write path is unchanged.
+- Rejected edits preserve their drafts and read the current order. Three-way
+  comparison uses separate original/draft/latest values. Untouched draft fields
+  adopt current values; overlapping changes require an explicit selection.
+  Continue prepares an editor with the reviewed latest revision, but never saves.
+  A missing target is never turned into a new reservation.
+- `REQUEST_EXPIRED` remains unknown, not a definitive non-write. An in-memory
+  update retains its journal and input until the user explicitly reviews current
+  state. Reconciliation does not claim whether that old intent once committed.
+  Reloaded descriptors, creates and deletes retain the existing list-review flow.
+- The 30-second client deadline includes session lookup. A late session result
+  cannot start a request after expiry. `AUTH_UNAVAILABLE` is a pre-dispatch error;
+  post-dispatch network timeouts still require confirmation, without blind retry.
+- `tests/editing-qc.mjs` uses isolated Chromium and WebKit with an iPhone profile
+  against the memory-only preview. Set `MYORDER_PLAYWRIGHT_PATH` to the available
+  Playwright package if it is not installed locally. It covers foreground reads,
+  independent/overlapping edits, expired-update review, unchanged-version manual
+  edits, a quiet-read/pending-write race, and a deleted target. This does not claim
+  verification on the user's physical iPhone or the original incident's cause.
+- No production fixture, reservation migration, new service, dependency or secret
+  is introduced. Existing repository-wide lint findings and eight development-only
+  dependency advisories remain documented in `order-connection-check.md`.
+- Pre-release verification: 112 Node tests passed; focused ESLint passed with no
+  new findings. The existing repository-wide baseline remains nine errors and
+  two warnings. Build passed (487.13 kB JS, 25.10 kB CSS before gzip). Production
+  dependency audit is clean; the eight existing development advisories retain
+  their documented 2026-10-29 review date.
+- The six original local failure-recovery scenarios and six editing QC groups
+  passed. Editing QC also checks keyboard containment, four responsive widths,
+  a recovery-storage cleanup failure, and disappearance of a deleted detail.
+  Adversarial QC findings about trailing refreshes and visible action errors were
+  addressed. Inverting the three-way comparison condition caused its tests to
+  fail; the correct condition was restored and verified.
+- Rollback may use the preceding `8a571a2` bounded-recovery build if needed; it
+  remains v2-compatible. Never use an unversioned writer or reset receipt/version
+  metadata. No deployment setting or migration is required for this follow-up.
