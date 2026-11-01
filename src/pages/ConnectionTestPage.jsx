@@ -45,6 +45,9 @@ const isValidConnectionResult = (value) => {
     isNonNegativeNumber(value.duplicateIdCount) &&
     isNonNegativeNumber(value.existingLegacyLValueCount) &&
     typeof value.idHeaderReady === 'boolean' &&
+    (value.missingIdRows === undefined || (Array.isArray(value.missingIdRows) && value.missingIdRows.every(row => Number.isSafeInteger(row) && row >= 2))) &&
+    (value.lockPresent === undefined || typeof value.lockPresent === 'boolean') &&
+    (value.lockRecognized === undefined || typeof value.lockRecognized === 'boolean') &&
     (value.fingerprint === undefined || value.fingerprint === null || typeof value.fingerprint === 'string')
   );
 };
@@ -307,6 +310,14 @@ export default function ConnectionTestPage({ session }) {
                   <dt>ID 헤더</dt>
                   <dd>{result.idHeaderReady ? '준비됨' : '미준비'}</dd>
                 </div>
+                {result.lockPresent !== undefined && <div>
+                  <dt>서버 처리 중 표시</dt>
+                  <dd>{result.lockPresent ? (result.lockRecognized ? '있음' : '식별 확인 필요') : '없음'}</dd>
+                </div>}
+                {result.missingIdRows?.length > 0 && <div>
+                  <dt>ID 확인 필요 행</dt>
+                  <dd>{result.missingIdRows.join(', ')}</dd>
+                </div>}
               </dl>
 
               {result.fingerprint && (
