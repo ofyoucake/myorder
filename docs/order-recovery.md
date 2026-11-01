@@ -220,6 +220,20 @@ untouched by this release.
   Existing production locks require a separately approved, quiescent metadata-only
   recovery; a fingerprint remaining equal alone is not proof that a writer ended.
   This fix does not delete any pre-existing lock, receipt, version or reservation.
+- Separately, the owner explicitly confirmed a write stop and approved recovery
+  of one specific production lock. A temporary owner-only route was bound to that
+  exact nonce digest and a short expiration, with a second expiry check immediately
+  before deletion. It sent exactly one metadata-delete request, no cell requests.
+  Its verified response and a separate post-read confirmed identical complete A:W
+  values/formulas (including every existing L value) and identical other metadata.
+  The temporary route/UI were removed after success; private audit snapshots stay
+  in ignored `artifacts/private/`. No production ID backfill or CRUD test was run.
+- Final verification: 121 permanent Node tests; six temporary recovery checks
+  before removal; isolated Chromium/WebKit loading/draft/conflict recheck QC;
+  six editing groups and six recovery scenarios. Mutation of the nonempty-ID
+  preservation guard failed the relevant tests; the original guard was restored.
+  Focused changed-file lint is clean except the pre-existing Dashboard baseline;
+  repository-wide lint remains nine errors/two warnings, not new regressions.
 - Rollback baseline: `37e604c` (diagnostic-only release). Do not roll back to an
   unversioned writer or reset receipts/version metadata. Runtime dependency audit
   is clean; existing development-only audit findings and lint baseline remain
