@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleOrdersRequest } from '../functions/_lib/orderHttp.js';
+import { OrderServerError } from '../functions/_lib/orderAuth.js';
 
 const origin = 'https://myorder.example';
 const env = { ORDER_API_ENABLED: 'true', ORDER_ISOLATED_TESTS_ENABLED: 'true' };
@@ -72,6 +73,19 @@ test('read is read-only and production/test targets are fixed server constants',
   const testId = isolated.calls.find(c => c[0] === 'store')[1].spreadsheetId;
   assert.notEqual(testId, productionId);
   assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+});
+
+test('incomplete IDs and busy preparation are explicit failed reads, never a partial successful list', async () => {
+  for (const code of ['ORDER_IDS_REQUIRED', 'ORDER_ID_CONFLICT', 'ORDER_STORE_BUSY', 'ORDER_SHEET_STRUCTURE']) {
+    const h = harness();
+    h.dependencies.createStore = () => ({ listState: async () => { throw new OrderServerError(code, 409); } });
+    const response = await handleOrdersRequest({ request: make(), env }, h.dependencies);
+    assert.equal(response.status, 409);
+    const payload = await response.json();
+    assert.deepEqual(payload, { error: { code } });
+    assert.equal(Object.hasOwn(payload, 'orders'), false);
+    assert.equal(h.calls.find(c => c[0] === 'client')[1].readOnly, true);
+  }
 });
 
 test('confirmation is owner-only same-origin, accepts only a PII-free intent and cannot choose a sheet', async () => {

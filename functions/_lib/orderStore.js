@@ -1,4 +1,5 @@
 import { OrderServerError } from './orderAuth.js';
+import { GoogleSheetsError } from './google.js';
 import { planOrderIds } from './orderIds.js';
 import { decodeOrderGrid } from './orderSnapshot.js';
 import {
@@ -35,7 +36,6 @@ const isOrderRow = row => row.slice(0, 11).some(hasValue);
 
 const mapExternalError = error => {
   if (error instanceof OrderServerError) throw error;
-  if (error?.status === 400 || error?.status === 409) fail('CONFLICT', 409);
   fail('SERVICE_UNAVAILABLE');
 };
 
@@ -122,7 +122,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     try {
       const metadata = await client.getSpreadsheet(spreadsheetId, GRID_FIELDS, { ranges: [`'${expectedTitle}'!A1:M${endRow}`] });
       const snapshot = gridSnapshot(metadata, 0, endRow);
-      if (snapshot.sheet.gridProperties.rowCount !== endRow || snapshot.values[0][11] !== HEADER_ID) fail('CONFLICT', 409);
+      if (snapshot.sheet.gridProperties.rowCount !== endRow || snapshot.values[0][11] !== HEADER_ID) fail('ORDER_SHEET_STRUCTURE', 409);
       return snapshot;
     } catch (error) {
       mapExternalError(error);
@@ -177,7 +177,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       if (!after[index].slice(0, 11).some(hasValue)) continue;
       orderCount += 1;
       const id = after[index][11];
-      if (typeof id !== 'string' || !ID.test(id) || seen.has(id.toLowerCase())) fail('CONFLICT', 409);
+      if (typeof id !== 'string' || !ID.test(id) || seen.has(id.toLowerCase())) fail('ORDER_ID_CONFLICT', 409);
       seen.add(id.toLowerCase());
     }
     return orderCount;
@@ -239,6 +239,15 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     try {
       return await client.batchUpdate(spreadsheetId, requests, options);
     } catch (error) {
+      // Only an explicit Google rejection proves this atomic batch did not apply.
+      // Timeout/network/5xx outcomes are never grounds for releasing a lock.
+      if (error instanceof GoogleSheetsError
+        && [400, 401, 403, 404, 413, 422, 429].includes(error.status)
+        && ['SHEETS_REQUEST_FAILED', 'SHEETS_UNAUTHORIZED', 'SHEETS_FORBIDDEN', 'SHEETS_NOT_FOUND', 'SHEETS_RATE_LIMITED'].includes(error.code)) {
+        const rejected = new OrderServerError('SERVICE_UNAVAILABLE');
+        rejected.writeRejected = true;
+        throw rejected;
+      }
       mapExternalError(error);
     }
   };
@@ -258,7 +267,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
 
   const acquireLock = async metadata => {
     const existing = (metadata?.developerMetadata || []).find(item => item?.metadataId === LOCK_METADATA_ID);
-    if (existing) fail('CONFLICT', 409);
+    if (existing) fail('ORDER_STORE_BUSY', 409);
     const owner = globalThis.crypto.randomUUID();
     try {
       await client.batchUpdate(spreadsheetId, [{
@@ -273,6 +282,10 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
         },
       }]);
     } catch (error) {
+      if (error?.status === 400 || error?.status === 409) {
+        const current = await readMetadata();
+        if ((current.metadata.developerMetadata || []).some(item => item.metadataId === LOCK_METADATA_ID)) fail('ORDER_STORE_BUSY', 409);
+      }
       mapExternalError(error);
     }
     return owner;
@@ -295,7 +308,8 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     for (let index = 1; index < values.length; index += 1) {
       if (!isOrderRow(values[index])) continue;
       const id = values[index][11];
-      if (typeof id !== 'string' || !ID.test(id) || seen.has(id.toLowerCase())) fail('CONFLICT', 409);
+      if (id === '' || id === null || id === undefined) fail('ORDER_IDS_REQUIRED', 409);
+      if (typeof id !== 'string' || !ID.test(id) || seen.has(id.toLowerCase())) fail('ORDER_ID_CONFLICT', 409);
       seen.add(id.toLowerCase());
     }
     return seen;
@@ -450,7 +464,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       if (parsed.revision !== revision) fail('SERVICE_UNAVAILABLE');
       return parsed;
     } catch (error) {
-      if (!mutationSent) await releaseLock(owner);
+      if (!mutationSent || error.writeRejected === true) await releaseLock(owner);
       if (error instanceof OrderServerError) throw error;
       if (mutationSent) fail('SERVICE_UNAVAILABLE');
       mapExternalError(error);
@@ -495,14 +509,14 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       if (result?.state !== 'not_applied' || (after.metadata.developerMetadata || []).some(m => m.metadataId === LOCK_METADATA_ID)) fail('SERVICE_UNAVAILABLE');
       return result;
     } catch (error) {
-      if (!sent) await releaseLock(owner);
+      if (!sent || error.writeRejected === true) await releaseLock(owner);
       throw error;
     }
   };
 
   const ensureIds = async () => {
     const initial = await readWideSnapshot();
-    const initialPlan = planOrderIds(initial.values, { sheetId: initial.sheet.sheetId, rowCount: initial.sheet.gridProperties.rowCount });
+    const initialPlan = planOrderIds(initial.values, { sheetId: initial.sheet.sheetId, rowCount: initial.sheet.gridProperties.rowCount, preserveExisting: true });
     if (!initialPlan.requests.length) return { assignedCount: 0, orderCount: initialPlan.orderCount, unchangedOtherColumns: true };
     const owner = await acquireLock(initial.metadata);
     let mutationSent = false;
@@ -515,13 +529,14 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       const plan = planOrderIds(snapshot.values, {
         sheetId: snapshot.sheet.sheetId,
         rowCount: snapshot.sheet.gridProperties.rowCount,
+        preserveExisting: true,
       });
       if (!plan.requests.length) {
         const orderCount = verifyIdMigration(snapshot.values, snapshot.values, snapshot.values.map(row => row[11]));
         await releaseLock(owner);
         return { assignedCount: 0, orderCount, unchangedOtherColumns: true };
       }
-      const expectedIds = plan.requests[0].updateCells.rows.map(row => row.values?.[0]?.userEnteredValue?.stringValue ?? '');
+      const expectedIds = plan.expectedIds;
       mutationSent = true;
       await callBatch([...plan.requests, deleteLockRequest(owner)]);
       const after = await readWideSnapshot();
@@ -529,7 +544,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       const orderCount = verifyIdMigration(snapshot.values, after.values, expectedIds);
       return { assignedCount: plan.assignedCount, orderCount, unchangedOtherColumns: true };
     } catch (error) {
-      if (!mutationSent) await releaseLock(owner);
+      if (!mutationSent || error.writeRejected === true) await releaseLock(owner);
       if (error instanceof OrderServerError) throw error;
       if (mutationSent) fail('SERVICE_UNAVAILABLE');
       mapExternalError(error);

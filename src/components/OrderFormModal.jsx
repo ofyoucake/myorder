@@ -132,6 +132,9 @@ export default function OrderFormModal({
   onCancel,
   busy = false,
   pending = false,
+  readBlocked = false,
+  readError = '',
+  onReloadOrders,
   onRetry,
   error = '',
 }) {
@@ -249,7 +252,7 @@ export default function OrderFormModal({
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (busy || pending || conflict || !validate()) return;
+    if (busy || pending || readBlocked || conflict || !validate()) return;
 
     onSave?.(toOrderInput(form));
   };
@@ -329,9 +332,10 @@ export default function OrderFormModal({
         </header>
 
         <form className="order-form__body" onSubmit={handleSubmit} noValidate>
-          {conflict && <OrderConflictPanel key={conflict.latest?.revision || 'unavailable'} original={initialOrder} draft={toOrderInput(form)} conflict={conflict} onResolve={onResolveConflict} onReload={onReloadConflict} busy={busy} />}
+          {conflict && <OrderConflictPanel key={conflict.latest?.revision || 'unavailable'} original={initialOrder} draft={toOrderInput(form)} conflict={conflict} onResolve={onResolveConflict} onReload={onReloadConflict} busy={busy} readBlocked={readBlocked} readError={readError} />}
           <fieldset className="order-form__fieldset" disabled={busy || pending || Boolean(conflict)}>
             {error && !conflict?.checked && <div className="order-form__form-error" role="alert">{error}</div>}
+            {readBlocked && !pending && !conflict && <button type="button" className="order-form__button order-form__button--secondary" onClick={onReloadOrders} disabled={busy}>전체 주문 다시 확인</button>}
 
             <div className="order-form__section">
               <div className="order-form__section-heading">
@@ -461,7 +465,7 @@ export default function OrderFormModal({
                 <button className="order-form__button order-form__button--secondary" type="button" onClick={() => onCancel?.()} disabled={busy || pending}>
                   취소
                 </button>
-                <button className="order-form__button order-form__button--primary" type="submit" disabled={Boolean(conflict)}>
+                <button className="order-form__button order-form__button--primary" type="submit" disabled={readBlocked || Boolean(conflict)}>
                   {busy ? '저장 중...' : pending ? '입력 잠금됨' : initialOrder ? '변경사항 저장' : '주문 등록'}
                 </button>
               </div>}

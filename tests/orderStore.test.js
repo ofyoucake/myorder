@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { GoogleSheetsError } from '../functions/_lib/google.js';
 import {
   serializeOrderInput,
 } from '../functions/_lib/orderModel.js';
@@ -360,7 +361,7 @@ test('serializes concurrent creates through the durable metadata lock', async ()
     storeFor(client).create(order('two'), 'req-two'),
   ]);
   assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-  assert.equal(results.filter(result => result.status === 'rejected' && result.reason.code === 'CONFLICT').length, 1);
+  assert.equal(results.filter(result => result.status === 'rejected' && result.reason.code === 'ORDER_STORE_BUSY').length, 1);
   assert.equal(client.state.metadata.some(item => item.metadataId === LOCK_METADATA_ID), false);
   assert.ok(client.batches.some(batch => batch.some(request => request.createDeveloperMetadata?.developerMetadata?.metadataId === LOCK_METADATA_ID)));
   const lockRequest = client.batches.flat().find(request => request.createDeveloperMetadata?.developerMetadata?.metadataId === LOCK_METADATA_ID);
@@ -413,7 +414,7 @@ test('a stale pre-lock read cannot replay the same intent as a second create', a
 
 test('pre-write validation failure releases only its own lock and leaves reservations untouched', async () => {
   const client = createFakeClient({ rows: [rawValues(order('a'), ID), rawValues(order('b'), ID)] });
-  await assert.rejects(storeFor(client).create(order('new'), 'reject-duplicate'), error => error.code === 'CONFLICT');
+  await assert.rejects(storeFor(client).create(order('new'), 'reject-duplicate'), error => error.code === 'ORDER_ID_CONFLICT');
   assert.equal(client.state.metadata.some(item => item.metadataId === LOCK_METADATA_ID), false);
   assert.equal(client.batches.some(batch => batch.some(r => r.updateCells)), false);
 });
@@ -430,7 +431,7 @@ test('updates the ID-matched row after sorting between requests', async () => {
 test('rejects stale revisions and duplicate IDs without mutation', async () => {
   const duplicateClient = createFakeClient({ rows: [rawValues(order('a'), ID), rawValues(order('b'), ID)] });
   const duplicateStore = storeFor(duplicateClient);
-  await assert.rejects(duplicateStore.update(ID, order('x'), 'a'.repeat(64), 'req-duplicate'), error => error.code === 'CONFLICT');
+  await assert.rejects(duplicateStore.update(ID, order('x'), 'a'.repeat(64), 'req-duplicate'), error => error.code === 'ORDER_ID_CONFLICT');
   assert.equal(duplicateClient.batches.filter(batch => batch.some(request => request.updateCells)).length, 0);
 
   const staleClient = createFakeClient({ rows: [rawValues(order('a'), ID)] });
@@ -500,7 +501,7 @@ test('malformed or contradictory commit evidence never reports success or repeat
 
 test('list refuses missing IDs instead of silently backfilling them', async () => {
   const client = createFakeClient({ rows: [[...rawValues(order('missing'), ID).slice(0, 11), '']] });
-  await assert.rejects(storeFor(client).list(), error => error.code === 'CONFLICT');
+  await assert.rejects(storeFor(client).list(), error => error.code === 'ORDER_IDS_REQUIRED');
   assert.equal(client.batches.length, 0);
 });
 
@@ -519,11 +520,67 @@ test('ensureIds backfills only L, preserves A:K and M:W, and is idempotent', asy
   assert.equal(client.state.grid[1][12], before[1][12]);
   assert.deepEqual(client.state.grid.map(row => row.map((value, column) => column === 11 ? '' : value)), before.map(row => row.map((value, column) => column === 11 ? '' : value)));
   const mutation = client.batches.flat().find(request => request.updateCells?.range.startColumnIndex === 11);
-  assert.deepEqual(mutation.updateCells.range, { sheetId: SHEET_ID, startRowIndex: 0, endRowIndex: 8, startColumnIndex: 11, endColumnIndex: 12 });
+  assert.deepEqual(mutation.updateCells.range, { sheetId: SHEET_ID, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 11, endColumnIndex: 12 });
   const batchCount = client.batches.length;
   const second = await store.ensureIds();
   assert.deepEqual(second, { assignedCount: 0, orderCount: 1, unchangedOtherColumns: true });
   assert.equal(client.batches.length, batchCount);
+});
+
+test('direct Sheet entry waits for a busy server without rewriting any reservation', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('direct entry'), ID).slice(0, 11), '']] });
+  const originalRead = client.getSpreadsheet;
+  client.getSpreadsheet = async (...args) => {
+    const result = await originalRead(...args);
+    result.developerMetadata.push({ metadataId: LOCK_METADATA_ID, metadataKey: LOCK_METADATA_KEY, metadataValue: 'another-owner' });
+    return result;
+  };
+  const before = client.state;
+  await assert.rejects(storeFor(client).ensureIds(), e => e.code === 'ORDER_STORE_BUSY');
+  assert.deepEqual(client.state, before);
+  assert.equal(client.batches.length, 0);
+});
+
+test('a definitively rejected ID batch releases only its own lock and can be retried', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('direct entry'), ID).slice(0, 11), '']] });
+  const originalWrite = client.batchUpdate;
+  let rejected = false;
+  client.batchUpdate = async (...args) => {
+    if (!rejected && args[1].some(request => request.updateCells)) {
+      rejected = true;
+      throw new GoogleSheetsError('SHEETS_REQUEST_FAILED', 400);
+    }
+    return originalWrite(...args);
+  };
+  const before = client.state.grid;
+  await assert.rejects(storeFor(client).ensureIds(), e => e.code === 'SERVICE_UNAVAILABLE');
+  assert.deepEqual(client.state.grid, before);
+  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), false);
+  assert.equal((await storeFor(client).ensureIds()).assignedCount, 1);
+});
+
+test('an uncertain ID batch keeps the lock and never guesses that it failed', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('uncertain'), ID).slice(0, 11), '']] });
+  const originalWrite = client.batchUpdate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(request => request.updateCells)) throw new GoogleSheetsError('TIMEOUT', 504);
+    return originalWrite(...args);
+  };
+  const before = client.state.grid;
+  await assert.rejects(storeFor(client).ensureIds(), e => e.code === 'SERVICE_UNAVAILABLE');
+  assert.deepEqual(client.state.grid, before);
+  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), true);
+});
+
+test('ID preparation preserves numeric and boolean L values on non-order rows exactly', async () => {
+  const orphan = value => [...Array(11).fill(''), value];
+  const client = createFakeClient({ rows: [[...rawValues(order('direct'), ID).slice(0, 11), ''], orphan(12345), orphan(true)] });
+  const before = client.state.grid;
+  const result = await storeFor(client).ensureIds();
+  assert.equal(result.assignedCount, 1);
+  assert.equal(client.state.grid[2][11], 12345);
+  assert.equal(client.state.grid[3][11], true);
+  assert.deepEqual(client.state.grid.map((row, i) => row.map((value, j) => i === 1 && j === 11 ? '' : value)), before);
 });
 
 test('unused legacy L values on blank rows do not hide real orders or get overwritten by an append', async () => {

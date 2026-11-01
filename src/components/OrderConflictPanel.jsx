@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { ORDER_FIELD_LABELS, reconcileOrder } from '../orderConflict';
 
-export default function OrderConflictPanel({ original, draft, conflict, onResolve, onReload, busy }) {
+export default function OrderConflictPanel({ original, draft, conflict, onResolve, onReload, busy, readBlocked = false, readError = '' }) {
   const [choices, setChoices] = useState({});
   const heading = useRef(null);
   useEffect(() => { heading.current?.focus(); }, [conflict.checked]);
-  if (!conflict.checked) return (
+  if (!conflict.checked || readBlocked) return (
     <section className="order-conflict" aria-label="최신 주문 확인">
       <h3 ref={heading} tabIndex={-1}>작성 내용은 보존되어 있습니다</h3>
       <p>최신 주문을 확인해야 편집을 계속할 수 있습니다.</p>
+      {readError && <p role="alert">{readError}</p>}
       <button type="button" className="order-form__button order-form__button--secondary" onClick={onReload} disabled={busy}>최신 주문 다시 확인</button>
     </section>
   );

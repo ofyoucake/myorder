@@ -183,3 +183,44 @@ untouched by this release.
 - Rollback may use the preceding `8a571a2` bounded-recovery build if needed; it
   remains v2-compatible. Never use an unversioned writer or reset receipt/version
   metadata. No deployment setting or migration is required for this follow-up.
+
+## Direct Sheet entry and complete-list failure handling — 2026-11-01
+
+- Direct Sheet entry initially has no L-column ID. Explicit app refresh prepares
+  missing IDs before reading the complete list; background/recovery reads remain
+  GET-only. A background missing-ID response is now a visible failure, not a
+  silently retained stale list. No polling or background business writes are added.
+- Operational ID preparation uses `preserveExisting: true`: it writes only empty
+  L cells on occupied order rows. Existing IDs, nonempty invalid L values, the
+  header, blank holes, A:K and M:W are never rewritten. Invalid/duplicate identity
+  or a changed header stops preparation. The initial legacy migration planner is
+  retained for historical compatibility but is not the operational refresh path.
+  More than 99 nonadjacent ID ranges fails before lock acquisition rather than
+  exceeding the Google client's bounded batch or partially omitting orders.
+- A present shared lock reports `ORDER_STORE_BUSY`; missing IDs report
+  `ORDER_IDS_REQUIRED`; malformed/duplicate IDs and unexpected structure have
+  distinct codes. Ordinary revision conflicts still use `CONFLICT`.
+- A typed, explicit Google rejection of an atomic batch (allowlisted 4xx/code
+  pair) proves that attempt did not apply. Only that execution's exact owner lock
+  may then be released. Network failures, timeouts, 5xx, response parsing failures
+  and post-write verification errors retain unknown-result protection. There is
+  no timeout-based lock stealing or automatic reset of production metadata.
+- A latest valid read failure, including a quiet refresh failure, hides normal
+  list/count/statistic views and shows a complete-list-unavailable state. It must
+  never mean zero orders. No row is filtered out to manufacture a successful list.
+  New writes and stale review acknowledgments are blocked; editor drafts and the
+  recovery journal are preserved. Explicit recheck inside an editor preserves
+  input. An obsolete response cannot invalidate a newer successful load or write.
+- Tests: rejected and uncertain ID batches, busy direct entry, sparse-only ID
+  updates, existing-value preservation, explicit failed-read HTTP contracts, plus
+  `tests/loading-qc.mjs` for Chromium/WebKit initial and foreground failures,
+  statistics, draft preservation/recheck and 320/768/1024/1440px layouts.
+- The incident's blocking condition was confirmed using owner-only read-only
+  diagnostics. The request that originally left the lock is not established.
+  Existing production locks require a separately approved, quiescent metadata-only
+  recovery; a fingerprint remaining equal alone is not proof that a writer ended.
+  This fix does not delete any pre-existing lock, receipt, version or reservation.
+- Rollback baseline: `37e604c` (diagnostic-only release). Do not roll back to an
+  unversioned writer or reset receipts/version metadata. Runtime dependency audit
+  is clean; existing development-only audit findings and lint baseline remain
+  scoped and documented in `order-connection-check.md`.

@@ -98,7 +98,7 @@ export default function OrderDetailModal({ order, onClose, onCopy, copiedType, o
   );
 }
 
-export function OrderDeleteModal({ order, onClose, onDelete, onRetry, busy, pending = false, error }) {
+export function OrderDeleteModal({ order, onClose, onDelete, onRetry, busy, pending = false, readBlocked = false, error }) {
   return (
     <OrderDialog title="주문을 삭제할까요?" onClose={onClose} busy={busy || pending} compact>
       <div className="order-dialog__body">
@@ -116,7 +116,7 @@ export function OrderDeleteModal({ order, onClose, onDelete, onRetry, busy, pend
           type="button"
           className="order-dialog__button order-dialog__button--destructive"
           onClick={pending ? onRetry : onDelete}
-          disabled={busy}
+          disabled={busy || (!pending && readBlocked)}
         >
           {busy ? '처리 중...' : pending ? '처리 결과 확인' : '주문 삭제'}
         </button>

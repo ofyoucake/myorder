@@ -25,6 +25,10 @@ const DEFINITIVE_NON_WRITE_CODES = new Set([
   'ORDER_NOT_READY',
   'RATE_LIMITED',
   'REQUEST_CANCELLED',
+  'ORDER_STORE_BUSY',
+  'ORDER_IDS_REQUIRED',
+  'ORDER_ID_CONFLICT',
+  'ORDER_SHEET_STRUCTURE',
 ]);
 const UNKNOWN_WRITE_MESSAGE = '저장 결과를 확인하지 못했습니다. 새 작업은 잠겨 있습니다. 인터넷 연결 후 ‘처리 결과 확인’을 눌러주세요. 자동으로 재시도하지 않습니다.';
 const ordersClient = createOrdersClient({
@@ -180,7 +184,7 @@ const DashboardPage = ({ session, onLogout }) => {
     if (quiet && (normalLoads.current || mutationLock.current || recoveryJournal.read())) return false;
     if (!quiet) normalLoads.current++;
     const sequence = ++loadSequence.current;
-    if (!quiet) { setLoading(true); setLoadError(''); }
+    if (!quiet) setLoading(true);
     try {
       if (ORDER_API_ENABLED) {
         const loadedOrders = await ordersClient.list({ synchronize: !quiet && !recoveryRead,
@@ -238,8 +242,11 @@ const DashboardPage = ({ session, onLogout }) => {
         }
       });
     } catch (error) {
-      if (!quiet && sequence === loadSequence.current) {
-        setLoadError(ORDER_API_ENABLED ? error.message : '시트를 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해주세요.');
+      if (sequence === loadSequence.current && (!quiet || (!mutationLock.current && !recoveryJournal.read()))) {
+        setReviewReady(false);
+        setLoadError(ORDER_API_ENABLED
+          ? (error.code === 'CONFLICT' ? '주문 목록의 ID 준비 또는 시트 상태를 확인하지 못했습니다. 다시 불러와도 계속되면 관리자 점검이 필요합니다.' : error.message)
+          : '시트를 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해주세요.');
       }
       return false;
     } finally {
@@ -269,7 +276,7 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const openOrderEditor = (order = null) => {
-    if (mutationLock.current || pendingMutation) return;
+    if (mutationLock.current || pendingMutation || loading || loadError) return;
     setMutationError('');
     setOrderFeedback('');
     setEditorConflict(null);
@@ -298,7 +305,7 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const resolveEditorConflict = input => {
-    if (mutationLock.current || !editorConflict?.checked) return;
+    if (mutationLock.current || loading || loadError || !editorConflict?.checked) return;
     if (pendingMutation && (!pendingMutation.reviewRequired || !editorConflict.requiresAck)) return;
     try {
       if (editorConflict.requiresAck) recoveryJournal.clear();
@@ -393,7 +400,7 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const beginIntent = (kind, order, input, requestId) => {
-    if (mutationLock.current || pendingMutation || !ORDER_API_ENABLED) return;
+    if (mutationLock.current || pendingMutation || loading || loadError || !ORDER_API_ENABLED) return;
     try {
       const writeVersion = ordersClient.getWriteVersion();
       performIntent({ kind, orderId: order?.id || '', order, input: input ? Object.freeze({ ...input }) : undefined, requestId, writeVersion });
@@ -449,7 +456,7 @@ const DashboardPage = ({ session, onLogout }) => {
   };
 
   const acknowledgeReview = () => {
-    if (mutationLock.current || !reviewReady || !pendingMutation?.reviewRequired) return;
+    if (mutationLock.current || loading || loadError || !reviewReady || !pendingMutation?.reviewRequired) return;
     try { recoveryJournal.clear(); setPendingMutation(null); setMutationError(''); setReviewReady(false); }
     catch { setMutationError('복구 정보 정리에 실패했습니다. 새 작업은 계속 잠겨 있습니다.'); }
   };
@@ -1120,18 +1127,24 @@ const DashboardPage = ({ session, onLogout }) => {
             {!pendingMutation.invalid && <button type="button" onClick={retryPendingMutation} disabled={mutationBusy}>
               {mutationBusy ? '확인 중...' : '처리 결과 확인'}
             </button>}
-            {pendingMutation.reviewRequired && <button type="button" onClick={acknowledgeReview} disabled={mutationBusy || !reviewReady}>주문 목록을 확인했습니다</button>}
+            {pendingMutation.reviewRequired && <button type="button" onClick={acknowledgeReview} disabled={mutationBusy || loading || Boolean(loadError) || !reviewReady}>주문 목록을 확인했습니다</button>}
           </div>
         )}
-        {activeMenu === 'dashboard' ? renderDashboard() : activeMenu === 'statistics' ? renderStatistics() : renderMyPage()}
+        {activeMenu === 'mypage' ? renderMyPage() : (loadError || loading) ? (
+          <section className="order-load-unavailable" aria-labelledby="order-load-title" aria-busy={loading}>
+            <h2 id="order-load-title">{loading ? '전체 주문을 확인하고 있습니다' : '전체 주문을 확인할 수 없습니다'}</h2>
+            <p>주문 누락을 막기 위해 목록·건수·통계 표시를 중단했습니다. 주문이 없는 상태로 판단하지 마세요.</p>
+            <p>다시 불러오거나 구글 시트에서 전체 주문을 직접 확인해 주세요.</p>
+          </section>
+        ) : activeMenu === 'dashboard' ? renderDashboard() : renderStatistics()}
 
-        {showDetailModal && selectedOrder && (
+        {showDetailModal && selectedOrder && !loadError && !loading && (
           <OrderDetailModal
             order={selectedOrder}
             onClose={() => setShowDetailModal(false)}
             onCopy={handleCopy}
             copiedType={copiedType}
-            editable={ORDER_API_ENABLED && !pendingMutation && !mutationBusy && canManageOrder(selectedOrder)}
+            editable={ORDER_API_ENABLED && !loadError && !loading && !pendingMutation && !mutationBusy && canManageOrder(selectedOrder)}
             onEdit={() => openOrderEditor(selectedOrder)}
             onDelete={() => {
               if (pendingMutation) return;
@@ -1155,8 +1168,13 @@ const DashboardPage = ({ session, onLogout }) => {
             onCancel={closeOrderEditor}
             busy={mutationBusy}
             pending={Boolean(pendingMutation)}
+            readBlocked={loading || Boolean(loadError)}
+            readError={loadError}
+            onReloadOrders={() => {
+              if (!normalLoads.current && !mutationLock.current && !recoveryJournal.read()) loadSheetData(sheetDataSource);
+            }}
             onRetry={retryPendingMutation}
-            error={mutationError}
+            error={mutationError || loadError}
           />
         )}
         {deleteTarget && (
@@ -1164,7 +1182,8 @@ const DashboardPage = ({ session, onLogout }) => {
             order={deleteTarget.order}
             busy={mutationBusy}
             pending={pendingMutation?.kind === 'delete'}
-            error={mutationError}
+            readBlocked={loading || Boolean(loadError)}
+            error={mutationError || loadError}
             onDelete={() => confirmDelete()}
             onRetry={retryPendingMutation}
             onClose={() => {
@@ -1181,6 +1200,7 @@ const DashboardPage = ({ session, onLogout }) => {
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(255, 255, 255, 0.8)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(8px)' }}>
           <div style={{ width: '48px', height: '48px', border: '4px solid var(--point-light)', borderTop: '4px solid var(--point)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
           <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)' }}>구글 시트에서 주문 데이터 동기화 중...</div>
+          <p className="order-sync-notice">완료될 때까지 구글 시트의 직접 편집·정렬을 잠시 멈춰주세요.</p>
         </div>
       )}
       <style>{`

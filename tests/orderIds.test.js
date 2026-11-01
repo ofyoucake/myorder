@@ -38,3 +38,34 @@ test('blank rows remain blank and do not reuse or clear unrelated old L cells', 
   assert.equal(plan.orderCount, 1);
   assert.equal(plan.requests[0].updateCells.rows[1].values[0].userEnteredValue.stringValue, '남겨둘 값');
 });
+
+test('routine ID preparation writes only empty L cells and preserves every existing value', () => {
+  const values = [['', ...Array(10).fill(''), 'ID'], row('existing', firstId), [], row('direct')];
+  const before = structuredClone(values);
+  const plan = planOrderIds(values, { sheetId: 0, rowCount: 7, preserveExisting: true, generateId: () => secondId });
+  assert.deepEqual(values, before);
+  assert.equal(plan.assignedCount, 1);
+  assert.deepEqual(plan.requests, [{ updateCells: {
+    range: { sheetId: 0, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 11, endColumnIndex: 12 },
+    rows: [{ values: [{ userEnteredValue: { stringValue: secondId } }] }], fields: 'userEnteredValue',
+  } }]);
+});
+
+test('routine preparation refuses invalid nonempty IDs or a changed header without rewriting them', () => {
+  for (const values of [
+    [['', ...Array(10).fill(''), 'ID'], row('private', 'nonempty-existing-value')],
+    [['', ...Array(10).fill(''), 'modified header'], row('direct')],
+  ]) {
+    const before = structuredClone(values);
+    assert.throws(() => planOrderIds(values, { sheetId: 0, rowCount: 3, preserveExisting: true }), e => ['ORDER_ID_CONFLICT', 'ORDER_SHEET_STRUCTURE'].includes(e.code));
+    assert.deepEqual(values, before);
+  }
+});
+
+test('oversized sparse preparation fails before any write rather than omitting rows', () => {
+  const values = [['', ...Array(10).fill(''), 'ID']];
+  for (let index = 0; index < 100; index++) values.push(row(`direct ${index}`), []);
+  const before = structuredClone(values);
+  assert.throws(() => planOrderIds(values, { sheetId: 0, rowCount: values.length, preserveExisting: true }), e => e.code === 'ORDER_IDS_REQUIRED');
+  assert.deepEqual(values, before);
+});
