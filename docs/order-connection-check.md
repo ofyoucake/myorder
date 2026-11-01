@@ -22,6 +22,33 @@ The fingerprint includes underlying formula text, excludes L, and is a private i
 comparison aid, not an anonymous health endpoint or proof that no other human edited the sheet.
 Do not post fingerprint snapshots or reservation data publicly.
 
+## ID synchronization diagnostics
+
+The owner-only connection response also reports `missingIdRows` (1-based sheet
+rows), `lockPresent`, and `lockRecognized`. It reads only metadata IDs/keys;
+lock owner values, receipt payloads, and customer fields are never returned.
+These fields do not repair IDs, remove locks, or establish that a write is safe.
+An existing lock requires investigation using the application's service-account
+project; PROJECT-visible metadata cannot be checked through an unrelated OAuth
+project. A missing ID is expected after direct Sheet entry and must not be
+misreported as an empty order list.
+
+This diagnostic extension leaves the production dashboard bundle unchanged.
+Its rollback baseline is commit `4fd2ee8`, deployment
+`3c9bf553-9e53-48c1-b170-9724ef0d45a6`. No Sheet rollback is needed: the probe
+uses the read-only Google scope and performs no Sheet or metadata writes.
+
+Diagnostic-extension verification (2026-11-01): 113 Node tests pass, including
+owner-only/no-write checks and a lock-flag mutation test. Focused ESLint passes;
+full ESLint retains the nine pre-existing errors/two warnings outside this slice.
+The production bundle matches `index-8CiyRQE0.js` when built with
+`VITE_ORDER_API_ENABLED=true`; do not deploy a build without that flag.
+Production dependency audit is clean. Full audit reports 15 development-tool
+findings (seven high, seven moderate, one low), not runtime dependencies.
+No dependency is changed here. Builds use trusted sources; local dev/QC remains
+loopback-only with no untrusted project input. Review toolchain updates separately
+by 2026-11-08 rather than combining them with incident diagnosis.
+
 ## Verification and rollout
 
 Run the Node test files, focused ESLint, a clean staged-tree production build, and dependency audit.

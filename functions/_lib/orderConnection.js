@@ -8,7 +8,7 @@ const fingerprintValues = async values => {
 };
 
 export async function inspectOrderConnection(client, spreadsheetId, { includeIdFingerprint = false } = {}) {
-  const metadata = await client.getSpreadsheet(spreadsheetId, 'properties(timeZone),sheets(properties(sheetId,title,gridProperties(rowCount)))');
+  const metadata = await client.getSpreadsheet(spreadsheetId, 'properties(timeZone),developerMetadata(metadataId,metadataKey),sheets(properties(sheetId,title,gridProperties(rowCount)))');
   const sheet = metadata?.sheets?.find(item => item?.properties?.title === '주문정보')?.properties;
   const rowCount = sheet?.gridProperties?.rowCount;
   if (!Number.isSafeInteger(rowCount) || rowCount < 1 || rowCount > 20000) throw new OrderServerError('SERVICE_UNAVAILABLE');
@@ -20,6 +20,7 @@ export async function inspectOrderConnection(client, spreadsheetId, { includeIdF
   let orderCount = 0;
   let lastOrderRow = 1;
   let missingIdCount = 0;
+  const missingIdRows = [];
   let existingLegacyLValueCount = 0;
   let duplicateIdCount = 0;
   const seen = new Set();
@@ -31,6 +32,7 @@ export async function inspectOrderConnection(client, spreadsheetId, { includeIdF
     const id = text(row[11]);
     if (!ID.test(id)) {
       missingIdCount += 1;
+      missingIdRows.push(index + 1);
       if (id) existingLegacyLValueCount += 1;
     } else {
       if (seen.has(id)) duplicateIdCount += 1;
@@ -41,9 +43,11 @@ export async function inspectOrderConnection(client, spreadsheetId, { includeIdF
   // Include all other cells/formulas, even in rows containing only M:W data.
   const protectedValues = Array.from({ length: rowCount }, (_, index) =>
     Array.from({ length: 23 }, (_, column) => column === 11 ? '' : text(values[index]?.[column])));
+  const lock = (metadata.developerMetadata || []).find(item => item.metadataId === 2026102201);
   return {
     connected: true, readOnly: true, timeZone: metadata?.properties?.timeZone || '',
     orderCount, lastOrderRow, missingIdCount, duplicateIdCount, existingLegacyLValueCount,
+    missingIdRows, lockPresent: Boolean(lock), lockRecognized: lock?.metadataKey === 'myorder.orderStore.lock.v1',
     idHeaderReady: text(values[0]?.[11]) === 'ID',
     fingerprint: await fingerprintValues(protectedValues),
     ...(includeIdFingerprint ? { completeFingerprint: await fingerprintValues(

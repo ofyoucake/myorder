@@ -69,6 +69,27 @@ test('duplicate IDs are reported, never silently reassigned', async () => {
   assert.equal((await inspectOrderConnection(client, 'production-sheet')).duplicateIdCount, 1);
 });
 
+test('ID diagnostics identify missing rows and a lock without exposing its owner or writing cells', async () => {
+  const rows = [Array(12).fill(''), ['PRIVATE_ORDER'], ['PRIVATE_ORDER_2']];
+  rows[0][11] = 'ID';
+  const client = {
+    getSpreadsheet: async (_id, fields) => {
+      assert.match(fields, /developerMetadata/);
+      return {
+        developerMetadata: [{ metadataId: 2026102201, metadataKey: 'myorder.orderStore.lock.v1', metadataValue: 'PRIVATE_LOCK_OWNER' }],
+        sheets: [{ properties: { title: '주문정보', gridProperties: { rowCount: 5 } } }],
+      };
+    },
+    getValues: async () => ({ values: rows }),
+    batchUpdate: () => assert.fail('diagnostics must never write'),
+  };
+  const result = await inspectOrderConnection(client, 'production-sheet');
+  assert.deepEqual(result.missingIdRows, [2, 3]);
+  assert.equal(result.lockPresent, true);
+  assert.equal(result.lockRecognized, true);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ORDER|PRIVATE_LOCK_OWNER/);
+});
+
 test('production connection route rejects every mutation method without credentials', async () => {
   for (const method of ['POST', 'PATCH', 'PUT', 'DELETE']) {
     const response = await onRequest({ request: new Request(request.url, { method }), env: {} });
