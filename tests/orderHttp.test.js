@@ -76,7 +76,7 @@ test('read is read-only and production/test targets are fixed server constants',
 });
 
 test('incomplete IDs and busy preparation are explicit failed reads, never a partial successful list', async () => {
-  for (const code of ['ORDER_IDS_REQUIRED', 'ORDER_ID_CONFLICT', 'ORDER_STORE_BUSY', 'ORDER_SHEET_STRUCTURE']) {
+  for (const code of ['ORDER_IDS_REQUIRED', 'ORDER_ID_CONFLICT', 'ORDER_STORE_BUSY', 'ORDER_ID_WRITE_PENDING', 'ORDER_ID_PREPARATION_PENDING', 'ORDER_SHEET_STRUCTURE']) {
     const h = harness();
     h.dependencies.createStore = () => ({ listState: async () => { throw new OrderServerError(code, 409); } });
     const response = await handleOrdersRequest({ request: make(), env }, h.dependencies);

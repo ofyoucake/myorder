@@ -27,6 +27,8 @@ const DEFINITIVE_NON_WRITE_CODES = new Set([
   'RATE_LIMITED',
   'REQUEST_CANCELLED',
   'ORDER_STORE_BUSY',
+  'ORDER_ID_PREPARATION_PENDING',
+  'ORDER_ID_WRITE_PENDING',
   'ORDER_IDS_REQUIRED',
   'ORDER_ID_CONFLICT',
   'ORDER_SHEET_STRUCTURE',
@@ -1136,6 +1138,7 @@ const DashboardPage = ({ session, onLogout }) => {
 
         {orderFeedback && <div className="order-feedback" role="status"><span>{orderFeedback}</span><button type="button" aria-label="안내 닫기" onClick={() => setOrderFeedback('')}>×</button></div>}
         {loadError && <div className="order-feedback order-feedback--error" role="alert"><span>{loadError}</span><button type="button" onClick={() => loadSheetData(sheetInfo)}>다시 불러오기</button></div>}
+        {activeMenu === 'mypage' && (loading || loadError) && <div className="order-feedback" role="status"><span>주문 확인이 끝날 때까지 구글 시트에서 편집하거나 정렬하지 마세요.</span></div>}
         {pendingMutation && !orderEditor && !deleteTarget && (
           <div className="order-feedback order-feedback--error order-recovery" role="alert">
             <span>{mutationError || (pendingMutation.invalid ? '복구 정보를 읽을 수 없습니다. 새 작업을 중지했습니다. 관리자 점검이 필요합니다.'
@@ -1150,7 +1153,7 @@ const DashboardPage = ({ session, onLogout }) => {
           <section className="order-load-unavailable" aria-labelledby="order-load-title" aria-busy={loading}>
             <h2 id="order-load-title">{loading ? '전체 주문을 확인하고 있습니다' : '전체 주문을 확인할 수 없습니다'}</h2>
             <p>주문 누락을 막기 위해 목록·건수·통계 표시를 중단했습니다. 주문이 없는 상태로 판단하지 마세요.</p>
-            <p>다시 불러오거나 구글 시트에서 전체 주문을 직접 확인해 주세요.</p>
+            <p>{loading ? '확인이 끝날 때까지 구글 시트에서 주문을 편집하거나 정렬하지 마세요.' : '처리 결과가 확인되지 않았을 수 있습니다. 구글 시트에서 편집·정렬하지 말고, 읽기 전용으로 주문을 확인해 주세요.'}</p>
           </section>
         ) : activeMenu === 'dashboard' ? renderDashboard() : renderStatistics()}
 

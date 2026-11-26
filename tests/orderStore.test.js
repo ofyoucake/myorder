@@ -36,7 +36,7 @@ const rawValues = (input, id) => serializeOrderInput(input, id).map(cell => {
 const clone = value => structuredClone(value);
 
 function createFakeClient({ rows = [], responseLost = false, readbackFailure = false, sortOnNextRead = false } = {}) {
-  const grid = Array.from({ length: 8 }, () => Array(26).fill(''));
+  const grid = Array.from({ length: Math.max(8, rows.length + 1) }, () => Array(26).fill(''));
   grid[0].splice(0, HEADERS.length, ...HEADERS);
   rows.forEach((row, index) => { grid[index + 1].splice(0, row.length, ...row); });
   const metadata = [];
@@ -73,6 +73,15 @@ function createFakeClient({ rows = [], responseLost = false, readbackFailure = f
         throw error;
       }
       metadata.push({ ...clone(item), metadataId: item.metadataId ?? nextMetadataId++ });
+    }
+    if (request.updateDeveloperMetadata) {
+      const update = request.updateDeveloperMetadata;
+      assert.equal(update.fields, 'metadataValue');
+      assert.equal(update.dataFilters.length, 1);
+      const lookup = update.dataFilters[0].developerMetadataLookup;
+      const item = metadata.find(entry => entry.metadataId === lookup.metadataId && entry.metadataKey === lookup.metadataKey
+        && entry.metadataValue === lookup.metadataValue);
+      if (item) item.metadataValue = update.developerMetadata.metadataValue;
     }
     if (request.updateCells) applyUpdate(request);
     if (request.deleteDeveloperMetadata) {
@@ -567,9 +576,156 @@ test('an uncertain ID batch keeps the lock and never guesses that it failed', as
     return originalWrite(...args);
   };
   const before = client.state.grid;
-  await assert.rejects(storeFor(client).ensureIds(), e => e.code === 'SERVICE_UNAVAILABLE');
+  await assert.rejects(storeFor(client).ensureIds(), e => e.code === 'ORDER_ID_WRITE_PENDING');
   assert.deepEqual(client.state.grid, before);
-  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), true);
+  const lock = client.state.metadata.find(m => m.metadataId === LOCK_METADATA_ID);
+  assert.equal(JSON.parse(lock.metadataValue).stage, 'id_write_may_be_sent');
+  assert.equal(JSON.parse(lock.metadataValue).kind, 'id_sync');
+});
+
+test('a committed lock with a lost acquisition response is safely reclaimed by its own operation', async () => {
+  const cases = [
+    { name: 'create', run: store => store.create(order('acquire-timeout'), 'acquire-timeout', 0) },
+    { name: 'confirm', run: store => store.confirm({ kind: 'create', requestId: 'acquire-timeout', orderId: '', writeVersion: 0 }) },
+    { name: 'ensureIds', rows: [[...rawValues(order('legacy'), ID).slice(0, 11), '']], run: store => store.ensureIds() },
+  ];
+  for (const scenario of cases) {
+    const client = createFakeClient({ rows: scenario.rows });
+    const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+    const realBatch = client.batchUpdate;
+    let timedOut = false;
+    client.batchUpdate = async (...args) => {
+      const result = await realBatch(...args);
+      if (!timedOut && args[1].some(r => r.createDeveloperMetadata?.developerMetadata.metadataId === LOCK_METADATA_ID)) {
+        timedOut = true;
+        throw new GoogleSheetsError('TIMEOUT', 504);
+      }
+      return result;
+    };
+    const result = await scenario.run(store);
+    assert.equal(timedOut, true, scenario.name);
+    assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), false, scenario.name);
+    if (scenario.name === 'create') assert.equal(result.customer, '고객 acquire-timeout');
+    if (scenario.name === 'confirm') assert.equal(result.state, 'not_applied');
+    if (scenario.name === 'ensureIds') {
+      assert.equal(result.assignedCount, 1);
+      assert.match(client.state.grid[1][11], /^ord_/);
+    }
+  }
+});
+
+test('an acquisition timeout with no observed lock is not retried or unlocked', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('legacy'), ID).slice(0, 11), '']] });
+  client.batchUpdate = async () => { throw new GoogleSheetsError('TIMEOUT', 504); };
+  const before = client.state;
+  await assert.rejects(storeFor(client).ensureIds(), e => e.code === 'SERVICE_UNAVAILABLE');
+  assert.deepEqual(client.state, before);
+});
+
+test('an ID stage marker with a lost response is reconciled before the only ID write', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('direct'), ID).slice(0, 11), '']] });
+  const realBatch = client.batchUpdate;
+  let lost = false;
+  client.batchUpdate = async (...args) => {
+    const result = await realBatch(...args);
+    if (!lost && args[1].some(r => r.updateDeveloperMetadata)) {
+      lost = true;
+      throw new GoogleSheetsError('TIMEOUT', 504);
+    }
+    return result;
+  };
+  assert.equal((await storeFor(client).ensureIds()).assignedCount, 1);
+  assert.equal(lost, true);
+  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), false);
+  assert.equal(client.batches.filter(batch => batch.some(r => r.updateCells)).length, 1);
+});
+
+test('an unconfirmed ID stage marker never triggers a write or unlock', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('direct'), ID).slice(0, 11), '']] });
+  const realBatch = client.batchUpdate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(r => r.updateDeveloperMetadata)) throw new GoogleSheetsError('TIMEOUT', 504);
+    return realBatch(...args);
+  };
+  const before = client.state.grid;
+  await assert.rejects(storeFor(client).ensureIds());
+  assert.deepEqual(client.state.grid, before);
+  assert.equal(JSON.parse(client.state.metadata.find(m => m.metadataId === LOCK_METADATA_ID).metadataValue).stage, 'lock_acquired');
+  assert.equal(client.batches.some(batch => batch.some(r => r.updateCells || r.deleteDeveloperMetadata)), false);
+});
+
+test('a pending ID-sync write has its own non-sensitive busy error', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('direct'), ID).slice(0, 11), '']] });
+  const realBatch = client.batchUpdate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(r => r.updateCells)) throw new GoogleSheetsError('TIMEOUT', 504);
+    return realBatch(...args);
+  };
+  await assert.rejects(storeFor(client).ensureIds());
+  await assert.rejects(storeFor(client).ensureIds(), error => error.code === 'ORDER_ID_WRITE_PENDING');
+});
+
+test('a pending ID write blocks a complete-looking list even if the Sheet changes after dispatch', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('direct'), ID).slice(0, 11), '']] });
+  const realBatch = client.batchUpdate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(r => r.updateCells)) throw new GoogleSheetsError('TIMEOUT', 504);
+    return realBatch(...args);
+  };
+  const store = storeFor(client);
+  await assert.rejects(store.ensureIds());
+  await realBatch(TEST_SPREADSHEET_ID, [{ updateCells: {
+    range: { sheetId: SHEET_ID, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 11, endColumnIndex: 12 },
+    rows: [{ values: [{ userEnteredValue: { stringValue: ID_2 } }] }], fields: 'userEnteredValue',
+  } }]);
+  await assert.rejects(store.ensureIds(), error => error.code === 'ORDER_ID_WRITE_PENDING');
+  await assert.rejects(store.list(), error => error.code === 'ORDER_ID_WRITE_PENDING');
+});
+
+test('ten direct-entry orders receive distinct IDs without modifying other cells', async () => {
+  const rows = Array.from({ length: 10 }, (_, index) => [...rawValues(order(`직접입력 ${index}`), ID).slice(0, 11), '']);
+  const client = createFakeClient({ rows });
+  const before = client.state.grid;
+  const store = storeFor(client);
+  assert.equal((await store.ensureIds()).assignedCount, 10);
+  const ids = client.state.grid.slice(1).map(row => row[11]);
+  assert.equal(new Set(ids).size, 10);
+  assert.equal((await store.list()).length, 10);
+  assert.deepEqual(client.state.grid.map((row, index) => row.map((value, column) => index > 0 && column === 11 ? '' : value)), before);
+});
+
+test('a timed-out in-flight mutation cannot be unlocked or cancelled before its late commit', async () => {
+  const client = createFakeClient();
+  const store = createOrderStore({ client, spreadsheetId: TEST_SPREADSHEET_ID });
+  const realBatch = client.batchUpdate;
+  let commitLate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(r => r.updateCells)) {
+      assert.equal(commitLate, undefined, 'the business mutation must not be sent twice');
+      commitLate = () => realBatch(...args);
+      throw new GoogleSheetsError('TIMEOUT', 504);
+    }
+    return realBatch(...args);
+  };
+  const descriptor = { kind: 'create', requestId: 'late-commit', orderId: '', writeVersion: 0 };
+  await assert.rejects(store.create(order('late-commit'), descriptor.requestId, 0), e => e.code === 'SERVICE_UNAVAILABLE');
+  assert.equal(typeof commitLate, 'function');
+  const pending = client.state;
+  assert.ok(pending.metadata.some(m => m.metadataId === LOCK_METADATA_ID));
+  assert.equal(pending.grid[1][11], '');
+  await assert.rejects(store.confirm(descriptor), e => e.code === 'ORDER_STORE_BUSY');
+  await assert.rejects(store.create(order('late-commit'), descriptor.requestId, 0), e => e.code === 'ORDER_STORE_BUSY');
+  assert.deepEqual(client.state, pending);
+  assert.equal(client.batches.length, 1);
+
+  // The server completes the already-sent atomic batch after the caller timed out.
+  await commitLate();
+  assert.equal((await store.confirm(descriptor)).state, 'completed');
+  const saved = await store.create(order('late-commit'), descriptor.requestId, 0);
+  assert.equal(saved.customer, '고객 late-commit');
+  assert.equal((await store.list()).length, 1);
+  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), false);
+  assert.equal(client.batches.filter(batch => batch.some(r => r.updateCells)).length, 1);
 });
 
 test('ID preparation preserves numeric and boolean L values on non-order rows exactly', async () => {

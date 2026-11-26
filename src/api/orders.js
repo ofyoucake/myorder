@@ -10,6 +10,8 @@ const ERROR_MESSAGES = {
   FORBIDDEN: '이 계정에는 주문을 관리할 권한이 없습니다.',
   CONFLICT: '시트에서 주문이 변경되었습니다. 최신 내용을 불러온 뒤 다시 수정해주세요.',
   ORDER_STORE_BUSY: '서버의 이전 처리 중 표시로 주문 준비가 차단되었습니다. 계속되면 관리자 점검이 필요합니다.',
+  ORDER_ID_PREPARATION_PENDING: '주문 ID 준비 중인 작업이 있습니다. 계속되면 관리자 점검이 필요합니다.',
+  ORDER_ID_WRITE_PENDING: '주문 ID 저장 결과가 아직 확인되지 않았습니다. 계속되면 관리자 점검이 필요합니다.',
   ORDER_IDS_REQUIRED: '시트에 직접 입력된 주문의 ID 준비가 필요합니다. 다시 불러오기를 눌러 전체 주문을 확인해주세요.',
   ORDER_ID_CONFLICT: '주문 ID가 중복되었거나 형식이 올바르지 않습니다. 시트의 기존 ID를 임의로 바꾸지 말고 관리자 점검을 진행해주세요.',
   ORDER_SHEET_STRUCTURE: '주문 시트의 ID 열 또는 구조가 예상과 다릅니다. 관리자 점검이 필요합니다.',

@@ -265,10 +265,23 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     },
   });
 
-  const acquireLock = async metadata => {
+  const failBusy = lock => {
+    if (lock?.metadataKey === LOCK_METADATA_KEY && typeof lock.metadataValue === 'string') {
+      let state;
+      try { state = JSON.parse(lock.metadataValue); } catch { /* Legacy locks have no recorded phase. */ }
+      if (state?.v === 1 && state.kind === 'id_sync') {
+        if (state.stage === 'id_write_may_be_sent') fail('ORDER_ID_WRITE_PENDING', 409);
+        if (state.stage === 'lock_acquired') fail('ORDER_ID_PREPARATION_PENDING', 409);
+      }
+    }
+    fail('ORDER_STORE_BUSY', 409);
+  };
+
+  const acquireLock = async (metadata, kind = '') => {
     const existing = (metadata?.developerMetadata || []).find(item => item?.metadataId === LOCK_METADATA_ID);
-    if (existing) fail('ORDER_STORE_BUSY', 409);
-    const owner = globalThis.crypto.randomUUID();
+    if (existing) failBusy(existing);
+    const nonce = globalThis.crypto.randomUUID();
+    const owner = kind === 'id_sync' ? JSON.stringify({ v: 1, kind, stage: 'lock_acquired', nonce, startedAt: Date.now() }) : nonce;
     try {
       await client.batchUpdate(spreadsheetId, [{
         createDeveloperMetadata: {
@@ -282,10 +295,13 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
         },
       }]);
     } catch (error) {
-      if (error?.status === 400 || error?.status === 409) {
-        const current = await readMetadata();
-        if ((current.metadata.developerMetadata || []).some(item => item.metadataId === LOCK_METADATA_ID)) fail('ORDER_STORE_BUSY', 409);
-      }
+      // The create may have committed even if its response was lost. Only this
+      // invocation knows its fresh owner token; observing that exact token proves
+      // this invocation owns the lock and has not yet sent any order mutation.
+      const current = await readMetadata();
+      const lock = (current.metadata.developerMetadata || []).find(item => item.metadataId === LOCK_METADATA_ID);
+      if (lock?.metadataKey === LOCK_METADATA_KEY && lock.metadataValue === owner) return owner;
+      if ((error?.status === 400 || error?.status === 409) && lock) failBusy(lock);
       mapExternalError(error);
     }
     return owner;
@@ -364,6 +380,8 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
   const listState = async () => {
     // Return data and its version from the same Google response, not two instants.
     const snapshot = await readBeforeWrite(await readMetadata());
+    const activeLock = (snapshot.metadata.developerMetadata || []).find(item => item?.metadataId === LOCK_METADATA_ID);
+    if (activeLock) failBusy(activeLock);
     validateActiveRows(snapshot.values);
     const orders = [];
     for (let index = 1; index < snapshot.values.length; index += 1) {
@@ -516,9 +534,11 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
 
   const ensureIds = async () => {
     const initial = await readWideSnapshot();
+    const activeLock = (initial.metadata.developerMetadata || []).find(item => item?.metadataId === LOCK_METADATA_ID);
+    if (activeLock) failBusy(activeLock);
     const initialPlan = planOrderIds(initial.values, { sheetId: initial.sheet.sheetId, rowCount: initial.sheet.gridProperties.rowCount, preserveExisting: true });
     if (!initialPlan.requests.length) return { assignedCount: 0, orderCount: initialPlan.orderCount, unchangedOtherColumns: true };
-    const owner = await acquireLock(initial.metadata);
+    let owner = await acquireLock(initial.metadata, 'id_sync');
     let mutationSent = false;
     try {
       const snapshot = await readWideSnapshot();
@@ -537,7 +557,26 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
         return { assignedCount: 0, orderCount, unchangedOtherColumns: true };
       }
       const expectedIds = plan.expectedIds;
+      // Record that an ID write may be sent BEFORE sending it. This stage is
+      // conservative: a crash after it does not prove a write actually happened.
+      const nextOwner = JSON.stringify({ ...JSON.parse(owner), stage: 'id_write_may_be_sent' });
       mutationSent = true;
+      try {
+        await callBatch([{ updateDeveloperMetadata: {
+          dataFilters: [{ developerMetadataLookup: { metadataId: LOCK_METADATA_ID, metadataKey: LOCK_METADATA_KEY,
+            metadataValue: owner, visibility: 'PROJECT' } }],
+          developerMetadata: { metadataValue: nextOwner }, fields: 'metadataValue',
+        } }]);
+      } catch (error) {
+        if (error.writeRejected === true) { mutationSent = false; throw error; }
+        // An uncertain metadata response can only be resumed by this invocation
+        // after it observes its exact new owner token. Otherwise fail closed.
+        const observed = await readMetadata();
+        assertOwnedLock(observed.metadata, nextOwner);
+      }
+      const marked = await readMetadata();
+      assertOwnedLock(marked.metadata, nextOwner);
+      owner = nextOwner;
       await callBatch([...plan.requests, deleteLockRequest(owner)]);
       const after = await readWideSnapshot();
       if ((after.metadata.developerMetadata || []).some(item => item.metadataId === LOCK_METADATA_ID && item.metadataValue === owner)) fail('SERVICE_UNAVAILABLE');
@@ -545,8 +584,8 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       return { assignedCount: plan.assignedCount, orderCount, unchangedOtherColumns: true };
     } catch (error) {
       if (!mutationSent || error.writeRejected === true) await releaseLock(owner);
+      if (mutationSent && error.writeRejected !== true) fail('ORDER_ID_WRITE_PENDING', 409);
       if (error instanceof OrderServerError) throw error;
-      if (mutationSent) fail('SERVICE_UNAVAILABLE');
       mapExternalError(error);
     }
   };

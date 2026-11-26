@@ -7,6 +7,18 @@ const stored = { ...input, id: 'ord_2ef261cb-b840-47ae-b522-5ebf50fa5819', revis
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const idsReady = (orderCount = 0) => json({ assignedCount: 0, orderCount, unchangedOtherColumns: true });
 
+test('ID preparation stage errors stop the list and show distinct safe messages', async () => {
+  for (const code of ['ORDER_ID_PREPARATION_PENDING', 'ORDER_ID_WRITE_PENDING']) {
+    let sends = 0;
+    const client = createOrdersClient({ getAccessToken: async () => 'test', fetchImpl: async () => {
+      sends++;
+      return json({ error: { code } }, 409);
+    } });
+    await assert.rejects(client.list(), error => error.code === code && error.message.includes('ID'));
+    assert.equal(sends, 1);
+  }
+});
+
 test('authentication has a deadline and cannot send after a late session result', async () => {
   let resolveToken;
   let sends = 0;
