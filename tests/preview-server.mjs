@@ -74,7 +74,7 @@ const orderApiMiddleware = async (req, res) => {
 };
 
 const server = await createServer({
-  define: { 'import.meta.env.VITE_ORDER_API_ENABLED': JSON.stringify('true') },
+  define: { 'import.meta.env.VITE_ORDER_API_ENABLED': JSON.stringify(process.env.MYORDER_PREVIEW_LEGACY === 'true' ? 'false' : 'true') },
   resolve: { alias: [{ find: /^(?:\.{1,2}\/)+supabaseClient(?:\.js)?$/, replacement: fileURLToPath(new URL('./preview-supabase.js', import.meta.url)) }] },
   server: { host: '127.0.0.1', port: 4173, strictPort: true },
   plugins: [{

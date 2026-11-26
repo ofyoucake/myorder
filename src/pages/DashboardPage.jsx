@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { OrderCard } from '../components/OrderCard';
 import OrderFormModal from '../components/OrderFormModal';
+import { generateChristmasMessage, isChristmasPickup } from '../christmasMessages';
 import OrderDetailModal, { OrderDeleteModal } from '../components/OrderDetailModal';
 import { canManageOrder, createOrdersClient, isUnknownWriteError } from '../api/orders';
 import { createRecoveryJournal } from '../orderRecovery';
@@ -161,7 +162,10 @@ const DashboardPage = ({ session, onLogout }) => {
         .select('sheet_url')
         .eq('id', session.user.id)
         .single();
-      if (data?.sheet_url) setSheetInfo(data.sheet_url);
+      if (data?.sheet_url) {
+        if (!ORDER_API_ENABLED) setLoading(true);
+        setSheetInfo(data.sheet_url);
+      }
     };
     fetchProfile();
   }, [session.user.id]);
@@ -179,12 +183,11 @@ const DashboardPage = ({ session, onLogout }) => {
     finally { setLoading(false); }
   };
 
-  const loadSheetData = useCallback(async (info, quiet = false, recoveryRead = false) => {
+  const readSheetData = useCallback(async (info, quiet = false, recoveryRead = false) => {
     if (!ORDER_API_ENABLED && !info) return;
     if (quiet && (normalLoads.current || mutationLock.current || recoveryJournal.read())) return false;
     if (!quiet) normalLoads.current++;
     const sequence = ++loadSequence.current;
-    if (!quiet) setLoading(true);
     try {
       if (ORDER_API_ENABLED) {
         const loadedOrders = await ordersClient.list({ synchronize: !quiet && !recoveryRead,
@@ -255,8 +258,13 @@ const DashboardPage = ({ session, onLogout }) => {
     }
   }, [recoveryJournal]);
 
+  const loadSheetData = useCallback((info, quiet = false, recoveryRead = false) => {
+    if (!quiet && (ORDER_API_ENABLED || info)) setLoading(true);
+    return readSheetData(info, quiet, recoveryRead);
+  }, [readSheetData]);
+
   const sheetDataSource = ORDER_API_ENABLED ? null : sheetInfo;
-  useEffect(() => { loadSheetData(sheetDataSource); }, [sheetDataSource, loadSheetData]);
+  useEffect(() => { readSheetData(sheetDataSource); }, [sheetDataSource, readSheetData]);
 
   useEffect(() => () => { ++loadSequence.current; ++conflictSequence.current; }, []);
 
@@ -502,6 +510,10 @@ const DashboardPage = ({ session, onLogout }) => {
 
   // 메시지 생성
   const generateMessage = (type, order) => {
+    if (isChristmasPickup(order.pickupDate)) {
+      const normalizedPickup = order.pickupDate.replace(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/, '$1.$2.$3');
+      return generateChristmasMessage(type, order, formatPickupDateTime(normalizedPickup));
+    }
     const firstName = getFirstName(order.customer);
     const pickupDateTime = formatPickupDateTime(order.pickupDate);
     const pickupRange = formatPickupRange(order.pickupDate);
@@ -586,8 +598,8 @@ const DashboardPage = ({ session, onLogout }) => {
 
   // 클립보드 복사
   const handleCopy = async (type, order) => {
-    const text = generateMessage(type, order);
     try {
+      const text = generateMessage(type, order);
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
@@ -605,7 +617,7 @@ const DashboardPage = ({ session, onLogout }) => {
       setCopiedType(type);
       setTimeout(() => setCopiedType(null), 1500);
     } catch (err) {
-      alert('복사에 실패했습니다. 직접 선택하여 복사해주세요.');
+      alert(err.code === 'CHRISTMAS_CAKE_UNKNOWN' ? err.message : '복사에 실패했습니다. 직접 선택하여 복사해주세요.');
     }
   };
 
@@ -683,9 +695,9 @@ const DashboardPage = ({ session, onLogout }) => {
     setExpandedFilters(prev => ({ ...prev, [type]: !prev[type] }));
   };
 
-  const applyFilters = (list) => {
+  const applyFilters = useCallback((list) => {
     return list.filter(o => matchesOrderFilters(o, filters));
-  };
+  }, [filters]);
 
   const activeFiltersCount = useMemo(() => {
     return Object.values(filters).reduce((sum, arr) => sum + (arr?.length || 0), 0);
@@ -697,13 +709,13 @@ const DashboardPage = ({ session, onLogout }) => {
       ? orders.filter(o => o.dateOnly === normalizedSelected)
       : (!startDate || !endDate ? [] : orders.filter(o => isDateInRange(o.dateOnly, startDate, endDate)));
     return applyFilters(base);
-  }, [orders, activeTab, selectedDate, startDate, endDate, filters]);
+  }, [orders, activeTab, selectedDate, startDate, endDate, applyFilters]);
 
   const statsOrders = useMemo(() => {
     if (!statsStartDate || !statsEndDate) return [];
     const base = orders.filter(o => isDateInRange(o.dateOnly, statsStartDate, statsEndDate));
     return applyFilters(base);
-  }, [orders, statsStartDate, statsEndDate, filters]);
+  }, [orders, statsStartDate, statsEndDate, applyFilters]);
 
    const statsData = useMemo(() => {
     const totalRevenue = statsOrders.reduce((sum, o) => sum + o.price, 0);
@@ -1045,7 +1057,11 @@ const DashboardPage = ({ session, onLogout }) => {
       <h3 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '24px' }}>구글 스프레드시트 연동 설정</h3>
       <p style={{ color: 'var(--text-sub)', fontSize: '14px', marginBottom: '32px' }}>연동할 구글 시트의 주소를 입력해주세요. 정보는 수파베이스 DB에 안전하게 보관됩니다.</p>
       <div className="flex flex-col gap-md">
-        <Input label="구글 시트 주소" value={sheetInfo} onChange={(e) => setSheetInfo(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." />
+        <Input label="구글 시트 주소" value={sheetInfo} onChange={(e) => {
+          const value = e.target.value;
+          if (!ORDER_API_ENABLED) setLoading(Boolean(value));
+          setSheetInfo(value);
+        }} placeholder="https://docs.google.com/spreadsheets/d/..." />
         <Button onClick={() => handleSaveSheetInfo(sheetInfo)} size="large" disabled={loading}>{loading ? '저장 중...' : '설정 저장하기'}</Button>
         {sheetInfo && (
           <Button variant="secondary" onClick={() => window.open(sheetInfo, '_blank')} style={{ marginTop: '16px' }}>

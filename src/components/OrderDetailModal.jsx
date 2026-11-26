@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
+import { getMessageActions } from '../christmasMessages';
 import './OrderDialogs.css';
 
 export function OrderDialog({ children, title, onClose, busy = false, compact = false }) {
@@ -73,12 +74,7 @@ export default function OrderDetailModal({ order, onClose, onCopy, copiedType, o
         <section className="order-detail__messages" aria-label="메시지 복사">
           <h3>메시지 복사</h3>
           <div className="order-detail__message-grid">
-            {[
-              { type: 'order', label: '📄 주문서' },
-              { type: 'reservation', label: '✅ 예약확정' },
-              { type: 'pickup', label: '🚗 픽업안내' },
-              { type: 'unmanned', label: '🔓 무인픽업안내' },
-            ].map(({ type, label }) => (
+            {getMessageActions(order.pickupDate).map(({ type, label }) => (
               <button key={type} type="button" className={`order-detail__message${copiedType === type ? ' is-copied' : ''}`} onClick={() => onCopy(type, order)}>
                 {copiedType === type ? '✓ 복사됨!' : label}
               </button>

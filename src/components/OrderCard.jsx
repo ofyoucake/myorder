@@ -1,5 +1,3 @@
-import React from 'react';
-
 export const OrderCard = ({ time, customer, items, color, onClick }) => {
   return (
     <div 
@@ -12,13 +10,12 @@ export const OrderCard = ({ time, customer, items, color, onClick }) => {
         justifyContent: 'space-between',
         cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        border: 'none',
+        border: '1px solid var(--line)',
         borderLeft: `4px solid ${color || 'var(--point)'}`,
         backgroundColor: 'var(--bg-card)',
         // Hover effect for interactivity
         transform: 'translateY(0)',
         boxShadow: 'none', // Remove flat shadow to match design.md
-        border: '1px solid var(--line)',
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = 'translateY(-2px)';
@@ -37,7 +34,7 @@ export const OrderCard = ({ time, customer, items, color, onClick }) => {
           fontSize: '13px', 
           fontWeight: '800', 
           color: color || 'var(--point)',
-          backgroundColor: `${color}15` || 'var(--point-light)',
+          backgroundColor: /^#[0-9a-f]{6}$/i.test(color || '') ? `${color}15` : 'var(--point-5)',
           padding: '4px 8px',
           borderRadius: '6px',
           minWidth: '55px',

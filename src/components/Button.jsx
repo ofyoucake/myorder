@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const Button = ({ children, variant = 'primary', size = 'standard', ...props }) => {
+export const Button = ({ children, variant = 'primary', size = 'standard', style, ...otherProps }) => {
   const [isHovered, setIsHovered] = React.useState(false);
   const [isActive, setIsActive] = React.useState(false);
 
@@ -51,10 +51,8 @@ export const Button = ({ children, variant = 'primary', size = 'standard', ...pr
     ...baseStyles,
     ...variants[variant],
     ...sizes[size],
-    ...props.style
+    ...style
   };
-
-  const { style, ...otherProps } = props;
 
   return (
     <button
