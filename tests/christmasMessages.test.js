@@ -21,17 +21,18 @@ test('cake names match explicit English, Korean and combined aliases without gue
   for (const name of ['', '다른 케이크', 'Velvet tree / Velvet snow', 'Velvet tree 추가']) assert.equal(getChristmasCake(name), null);
 });
 
-test('payment copies the exact template using the existing customer-name convention', () => {
+test('payment greeting omits the surname while the reservation name preserves the full name', () => {
   assert.equal(generateChristmasMessage('payment', order, pickup), `[OF YOU 크리스마스 케이크 입금 안내]
 
-민지님, 소중한 주문 감사드립니다:)\u0020
+안녕하세요 민지님,
+소중한 주문 감사드립니다:)\u0020
 
 예약해주신 케이크는 확인 후 정성스럽게 준비해드릴 예정입니다!\u0020
 
 입금 확인 후 제작이 확정되며,
 자세한 안내는 아래 내용을 참고 부탁드립니다.
 
-🎄 예약자명: 민지님
+🎄 예약자명: 김민지님
 🎄 픽업일시: 12월 23일 수요일 14시 30분
 🎄 케이크 디자인: Velvet tree (벨벳 트리)
 🎄 총 금액: 57,000원

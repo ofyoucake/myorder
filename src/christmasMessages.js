@@ -38,14 +38,15 @@ export function generateChristmasMessage(type, order, pickupDateTime) {
 
   if (type === 'payment') return `[OF YOU 크리스마스 케이크 입금 안내]
 
-${firstName}님, 소중한 주문 감사드립니다:)\u0020
+안녕하세요 ${firstName}님,
+소중한 주문 감사드립니다:)\u0020
 
 예약해주신 케이크는 확인 후 정성스럽게 준비해드릴 예정입니다!\u0020
 
 입금 확인 후 제작이 확정되며,
 자세한 안내는 아래 내용을 참고 부탁드립니다.
 
-🎄 예약자명: ${firstName}님
+🎄 예약자명: ${order.customer}님
 🎄 픽업일시: ${pickupDateTime}
 🎄 케이크 디자인: ${order.design}
 🎄 총 금액: ${cake.price}
