@@ -33,9 +33,10 @@ async function readBody(request) {
   } catch { invalid(); }
 }
 
-export async function handleOrdersRequest({ request, env, params = {} }, {
+export async function handleOrdersRequest(context, {
   createStore, testTarget = false, authorize = authorizeOrderAdmin, createClient = createGoogleSheetsClient,
 } = {}) {
+  const { request, env, params = {} } = context;
   const started = performance.now();
   const phases = new Map(['auth', 'google_auth', 'sheets_read', 'sheets_write'].map(name => [name, { duration: 0, count: 0 }]));
   const onMetric = ({ name, durationMs }) => {
@@ -86,13 +87,22 @@ export async function handleOrdersRequest({ request, env, params = {} }, {
     const target = TARGETS[testTarget ? 'test' : 'production'];
     const client = createClient({ credentialsJson: env.GOOGLE_SERVICE_ACCOUNT_JSON, allowedSpreadsheetIds: [target.spreadsheetId], readOnly: method === 'GET', onMetric });
     const store = createStore({ client, ...target });
-    if (synchronize) return respond(await store.ensureIds());
-    if (confirm) return respond(await store.confirm(body));
+    // Pages may cancel work when the browser disconnects. Retain each protected
+    // operation through its own completion; errors still reach the caller.
+    const retain = work => {
+      let authorizedToStart = false;
+      const operation = Promise.resolve().then(() => authorizedToStart ? work() : undefined);
+      if (typeof context.waitUntil === 'function') context.waitUntil(operation.catch(() => {}));
+      authorizedToStart = true;
+      return operation;
+    };
+    if (synchronize) return respond(await retain(() => store.ensureIds()));
+    if (confirm) return respond(await retain(() => store.confirm(body)));
     if (method === 'GET') return respond(await store.listState());
     const version = body.writeVersion === undefined ? {} : { writeVersion: body.writeVersion + 1 };
-    if (method === 'POST') return respond({ order: await store.create(body.order, body.requestId, body.writeVersion), ...version }, 201);
-    if (method === 'PATCH') return respond({ order: await store.update(id, body.order, body.expectedRevision, body.requestId, body.writeVersion), ...version });
-    return respond({ deletedId: await store.remove(id, body.expectedRevision, body.requestId, body.writeVersion), ...version });
+    if (method === 'POST') return respond({ order: await retain(() => store.create(body.order, body.requestId, body.writeVersion)), ...version }, 201);
+    if (method === 'PATCH') return respond({ order: await retain(() => store.update(id, body.order, body.expectedRevision, body.requestId, body.writeVersion)), ...version });
+    return respond({ deletedId: await retain(() => store.remove(id, body.expectedRevision, body.requestId, body.writeVersion)), ...version });
   } catch (error) {
     return serverError(error);
   }

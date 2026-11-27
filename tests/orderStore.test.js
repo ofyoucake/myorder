@@ -640,6 +640,114 @@ test('an ID stage marker with a lost response is reconciled before the only ID w
   assert.equal(client.batches.filter(batch => batch.some(r => r.updateCells)).length, 1);
 });
 
+test('an ID marker timeout retries the identical owner and late first update cannot change orders', async () => {
+  const legacy = [...rawValues(order('legacy'), ID).slice(0, 11), ''];
+  const existing = rawValues(order('existing'), ID);
+  const client = createFakeClient({ rows: [legacy, existing] });
+  const before = client.state.grid;
+  const realBatch = client.batchUpdate;
+  const markers = [];
+  let applyFirstLate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(request => request.updateDeveloperMetadata)) {
+      markers.push(clone(args[1]));
+      if (markers.length === 1) {
+        const saved = clone(args);
+        applyFirstLate = () => realBatch(...saved);
+        throw new GoogleSheetsError('TIMEOUT', 504);
+      }
+    }
+    return realBatch(...args);
+  };
+
+  const store = storeFor(client);
+  const result = await store.ensureIds();
+  assert.equal(result.assignedCount, 1);
+  assert.equal(markers.length, 2, 'one timeout must cause one bounded retry');
+  assert.deepEqual(markers[1], markers[0], 'retry must use the exact same owner and marker');
+  assert.equal(client.batches.filter(batch => batch.some(r => r.updateCells?.range.startColumnIndex === 11)).length, 1);
+  assert.equal(client.state.metadata.some(m => m.metadataId === LOCK_METADATA_ID), false);
+  assert.deepEqual(client.state.grid[0], before[0]);
+  assert.deepEqual(client.state.grid[2], before[2]);
+  assert.deepEqual(client.state.grid[1].filter((_, column) => column !== 11), before[1].filter((_, column) => column !== 11));
+  assert.match(client.state.grid[1][11], /^ord_/);
+
+  await store.create(order('new-after-sync'), 'new-after-sync');
+  let releaseNextWrite;
+  let markNextWriteStarted;
+  const nextWriteStarted = new Promise(resolve => { markNextWriteStarted = resolve; });
+  const nextWriteGate = new Promise(resolve => { releaseNextWrite = resolve; });
+  const priorBatch = client.batchUpdate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(request => request.updateCells)) {
+      markNextWriteStarted();
+      await nextWriteGate;
+    }
+    return priorBatch(...args);
+  };
+  const nextWrite = store.create(order('in-flight'), 'in-flight');
+  await nextWriteStarted;
+  const afterNewOrder = client.state;
+  const nextOwner = afterNewOrder.metadata.find(m => m.metadataId === LOCK_METADATA_ID)?.metadataValue;
+  let afterLateMarker;
+  try {
+    assert.ok(nextOwner && nextOwner !== markers[0][0].updateDeveloperMetadata.dataFilters[0].developerMetadataLookup.metadataValue);
+    await applyFirstLate();
+    afterLateMarker = client.state;
+  } finally {
+    releaseNextWrite();
+    await nextWrite;
+  }
+  assert.deepEqual(afterLateMarker, afterNewOrder, 'late marker must not change IDs, orders, or the next owner lock');
+});
+
+test('repeated uncertain ID marker responses stop bounded retries without deleting the lock', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('uncertain-marker'), ID).slice(0, 11), '']] });
+  const realBatch = client.batchUpdate;
+  const markers = [];
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(request => request.updateDeveloperMetadata)) {
+      markers.push(clone(args[1]));
+      throw new GoogleSheetsError('TIMEOUT', 504);
+    }
+    return realBatch(...args);
+  };
+  const before = client.state.grid;
+  await assert.rejects(storeFor(client).ensureIds(), error => error.code === 'ORDER_ID_PREPARATION_PENDING');
+  assert.deepEqual(client.state.grid, before);
+  assert.equal(JSON.parse(client.state.metadata.find(m => m.metadataId === LOCK_METADATA_ID).metadataValue).stage, 'lock_acquired');
+  assert.equal(client.batches.some(batch => batch.some(r => r.updateCells || r.deleteDeveloperMetadata)), false);
+  assert.ok(markers.length >= 2 && markers.length <= 5, 'retry must occur and remain bounded');
+  for (const marker of markers) assert.deepEqual(marker, markers[0]);
+});
+
+test('a later rejection cannot erase uncertainty about an earlier delayed marker', async () => {
+  const client = createFakeClient({ rows: [[...rawValues(order('uncertain-marker'), ID).slice(0, 11), '']] });
+  const realBatch = client.batchUpdate;
+  let attempts = 0;
+  let applyFirstLate;
+  client.batchUpdate = async (...args) => {
+    if (args[1].some(request => request.updateDeveloperMetadata)) {
+      if (++attempts === 1) {
+        const saved = clone(args);
+        applyFirstLate = () => realBatch(...saved);
+        throw new GoogleSheetsError('TIMEOUT', 504);
+      }
+      throw new GoogleSheetsError('SHEETS_REQUEST_FAILED', 400);
+    }
+    return realBatch(...args);
+  };
+  const before = client.state.grid;
+  await assert.rejects(storeFor(client).ensureIds(), error => error.code === 'ORDER_ID_PREPARATION_PENDING');
+  assert.equal(attempts, 3);
+  assert.deepEqual(client.state.grid, before);
+  assert.equal(JSON.parse(client.state.metadata.find(m => m.metadataId === LOCK_METADATA_ID).metadataValue).stage, 'lock_acquired');
+  assert.equal(client.batches.some(batch => batch.some(r => r.deleteDeveloperMetadata || r.updateCells)), false);
+  await applyFirstLate();
+  assert.equal(JSON.parse(client.state.metadata.find(m => m.metadataId === LOCK_METADATA_ID).metadataValue).stage, 'id_write_may_be_sent');
+  assert.deepEqual(client.state.grid, before);
+});
+
 test('an unconfirmed ID stage marker never triggers a write or unlock', async () => {
   const client = createFakeClient({ rows: [[...rawValues(order('direct'), ID).slice(0, 11), '']] });
   const realBatch = client.batchUpdate;

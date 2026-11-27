@@ -540,6 +540,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
     if (!initialPlan.requests.length) return { assignedCount: 0, orderCount: initialPlan.orderCount, unchangedOtherColumns: true };
     let owner = await acquireLock(initial.metadata, 'id_sync');
     let mutationSent = false;
+    let idWriteSent = false;
     try {
       const snapshot = await readWideSnapshot();
       assertOwnedLock(snapshot.metadata, owner);
@@ -561,22 +562,34 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       // conservative: a crash after it does not prove a write actually happened.
       const nextOwner = JSON.stringify({ ...JSON.parse(owner), stage: 'id_write_may_be_sent' });
       mutationSent = true;
-      try {
-        await callBatch([{ updateDeveloperMetadata: {
+      const markerRequest = { updateDeveloperMetadata: {
           dataFilters: [{ developerMetadataLookup: { metadataId: LOCK_METADATA_ID, metadataKey: LOCK_METADATA_KEY,
             metadataValue: owner, visibility: 'PROJECT' } }],
           developerMetadata: { metadataValue: nextOwner }, fields: 'metadataValue',
-        } }]);
-      } catch (error) {
-        if (error.writeRejected === true) { mutationSent = false; throw error; }
-        // An uncertain metadata response can only be resumed by this invocation
-        // after it observes its exact new owner token. Otherwise fail closed.
+        } };
+      let markerUncertain = false;
+      let markerConfirmed = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          // Repeating this exact old-owner -> new-owner transition is safe: a
+          // delayed duplicate cannot match a later or different owner.
+          await callBatch([markerRequest]);
+        } catch (error) {
+          if (error.writeRejected === true && !markerUncertain) { mutationSent = false; throw error; }
+          if (error.writeRejected !== true) markerUncertain = true;
+        }
         const observed = await readMetadata();
-        assertOwnedLock(observed.metadata, nextOwner);
+        const lock = (observed.metadata.developerMetadata || []).find(item => item?.metadataId === LOCK_METADATA_ID);
+        if (lock?.metadataKey === LOCK_METADATA_KEY && lock.metadataValue === nextOwner) {
+          markerConfirmed = true;
+          break;
+        }
+        // A foreign or missing lock must never be adopted or overwritten.
+        assertOwnedLock(observed.metadata, owner);
       }
-      const marked = await readMetadata();
-      assertOwnedLock(marked.metadata, nextOwner);
+      if (!markerConfirmed) fail('ORDER_ID_PREPARATION_PENDING', 409);
       owner = nextOwner;
+      idWriteSent = true;
       await callBatch([...plan.requests, deleteLockRequest(owner)]);
       const after = await readWideSnapshot();
       if ((after.metadata.developerMetadata || []).some(item => item.metadataId === LOCK_METADATA_ID && item.metadataValue === owner)) fail('SERVICE_UNAVAILABLE');
@@ -584,7 +597,7 @@ export function createOrderStore({ client, spreadsheetId, sheetTitle, sheetId } 
       return { assignedCount: plan.assignedCount, orderCount, unchangedOtherColumns: true };
     } catch (error) {
       if (!mutationSent || error.writeRejected === true) await releaseLock(owner);
-      if (mutationSent && error.writeRejected !== true) fail('ORDER_ID_WRITE_PENDING', 409);
+      if (mutationSent && error.writeRejected !== true) fail(idWriteSent ? 'ORDER_ID_WRITE_PENDING' : 'ORDER_ID_PREPARATION_PENDING', 409);
       if (error instanceof OrderServerError) throw error;
       mapExternalError(error);
     }

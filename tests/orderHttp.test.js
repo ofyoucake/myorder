@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setImmediate } from 'node:timers';
 import { handleOrdersRequest } from '../functions/_lib/orderHttp.js';
 import { OrderServerError } from '../functions/_lib/orderAuth.js';
 
@@ -129,6 +130,104 @@ test('ID synchronization has a separate bodyless-intent contract and cannot beco
   assert.equal(h.calls.some(c => c[0] === 'create'), false);
   const invalid = await handleOrdersRequest({ request: make('POST', { row: 2 }), env, params: { id: 'ids' } }, h.dependencies);
   assert.equal(invalid.status, 422);
+});
+
+const lifetimeCases = [
+  { name: 'ID synchronization', method: 'POST', body: {}, routeId: 'ids', action: 'ensureIds', result: { assignedCount: 1, orderCount: 1, unchangedOtherColumns: true }, status: 200 },
+  { name: 'create', method: 'POST', body: { order, requestId }, action: 'create', result: { id }, status: 201, response: { order: { id } } },
+  { name: 'update', method: 'PATCH', body: { order, requestId, expectedRevision: 'a'.repeat(64) }, routeId: id, action: 'update', result: { id }, status: 200, response: { order: { id } } },
+  { name: 'delete', method: 'DELETE', body: { requestId, expectedRevision: 'a'.repeat(64) }, routeId: id, action: 'remove', result: id, status: 200, response: { deletedId: id } },
+  { name: 'confirm', method: 'POST', body: { requestId, kind: 'create', orderId: '', writeVersion: 7 }, routeId: 'confirm', action: 'confirm', result: { state: 'not_applied', writeVersion: 8 }, status: 200 },
+];
+
+for (const scenario of lifetimeCases) {
+  test(`waitUntil retains the entire ${scenario.name} operation after client disconnect`, async () => {
+    const h = harness();
+    let start;
+    let release;
+    const started = new Promise(resolve => { start = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    let finished = false;
+    h.dependencies.createStore = () => ({ [scenario.action]: async () => {
+      start();
+      await gate;
+      finished = true;
+      return scenario.result;
+    } });
+    const controller = new AbortController();
+    const request = new Request(make(scenario.method, scenario.body), { signal: controller.signal });
+    const retained = [];
+    const responsePromise = handleOrdersRequest({ request, env, params: { id: scenario.routeId }, waitUntil: promise => retained.push(promise) }, h.dependencies);
+    await started;
+    await new Promise(resolve => setImmediate(resolve));
+    let settledBeforeRelease = false;
+    for (const promise of retained) Promise.resolve(promise).then(() => { settledBeforeRelease = true; }, () => { settledBeforeRelease = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    const retainedBeforeDisconnect = retained.length;
+    const settledWhileBlocked = settledBeforeRelease;
+    controller.abort();
+    assert.equal(request.signal.aborted, true);
+    assert.equal(finished, false);
+    release();
+    const response = await responsePromise;
+    await Promise.allSettled(retained);
+    assert.equal(response.status, scenario.status);
+    assert.deepEqual(await response.json(), scenario.response ?? scenario.result);
+    assert.equal(finished, true);
+    assert.ok(retainedBeforeDisconnect > 0, 'register the operation before the client disconnects');
+    assert.equal(settledWhileBlocked, false, 'the retained promise must cover the complete operation');
+  });
+}
+
+test('waitUntil preserves the ID synchronization error response after disconnect', async () => {
+  const h = harness();
+  let start;
+  let release;
+  const started = new Promise(resolve => { start = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  h.dependencies.createStore = () => ({ ensureIds: async () => {
+    start();
+    await gate;
+    throw new OrderServerError('ORDER_ID_WRITE_PENDING', 409);
+  } });
+  const controller = new AbortController();
+  const request = new Request(make('POST', {}), { signal: controller.signal });
+  const retained = [];
+  const responsePromise = handleOrdersRequest({ request, env, params: { id: 'ids' }, waitUntil: promise => retained.push(promise) }, h.dependencies);
+  await started;
+  await new Promise(resolve => setImmediate(resolve));
+  const retainedBeforeDisconnect = retained.length;
+  controller.abort();
+  release();
+  const response = await responsePromise;
+  await Promise.allSettled(retained);
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: { code: 'ORDER_ID_WRITE_PENDING' } });
+  assert.ok(retainedBeforeDisconnect > 0, 'retain the same complete failing operation');
+});
+
+test('authentication failure and pure GET do not register waitUntil work', async () => {
+  for (const denied of [true, false]) {
+    const h = harness();
+    if (denied) h.dependencies.authorize = async () => { throw new OrderServerError('AUTH_REQUIRED', 401); };
+    const retained = [];
+    const request = denied ? make('POST', {}) : make('GET');
+    const response = await handleOrdersRequest({ request, env, params: denied ? { id: 'ids' } : {}, waitUntil: promise => retained.push(promise) }, h.dependencies);
+    assert.equal(response.status, denied ? 401 : 200);
+    assert.deepEqual(retained, []);
+    if (denied) assert.deepEqual(await response.json(), { error: { code: 'AUTH_REQUIRED' } });
+    else assert.deepEqual(await response.json(), { orders: [{ id }], writeVersion: 7 });
+  }
+});
+
+test('a failed waitUntil registration never starts a protected operation', async () => {
+  const h = harness();
+  let started = false;
+  h.dependencies.createStore = () => ({ ensureIds: async () => { started = true; return { assignedCount: 0, orderCount: 0, unchangedOtherColumns: true }; } });
+  const response = await handleOrdersRequest({ request: make('POST', {}), env, params: { id: 'ids' }, waitUntil: () => { throw new Error('registration failed'); } }, h.dependencies);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(response.status, 503);
+  assert.equal(started, false);
 });
 
 test('authorized responses expose bounded numeric server timing without sensitive data', async () => {
